@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="31" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.VescControlCentre"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".activity.ApplyProfileActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.ApplyProfileTranslucent" />
+
+        <service
+            android:name=".service.VescService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- Telemetry Widget (Compact 2x1) -->
+        <receiver
+            android:name=".widget.TelemetryWidget2x1"
+            android:exported="true"
+            android:label="VESC Telemetry: Compact (2x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.vesccontrolcentre.ACTION_UPDATE_TELEMETRY" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/telemetry_widget_info_2x1" />
+        </receiver>
+
+        <!-- Telemetry Widget (Standard 2x2) -->
+        <receiver
+            android:name=".widget.TelemetryWidget"
+            android:exported="true"
+            android:label="VESC Telemetry: Standard (2x2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.vesccontrolcentre.ACTION_UPDATE_TELEMETRY" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/telemetry_widget_info_2x2" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TelemetryWidget2x2"
+            android:exported="true"
+            android:label="VESC Telemetry: Gauge (2x2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.vesccontrolcentre.ACTION_UPDATE_TELEMETRY" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/telemetry_widget_info_2x2" />
+        </receiver>
+
+        <!-- Telemetry Widget (Full Dashboard 4x2) -->
+        <receiver
+            android:name=".widget.TelemetryWidget4x2"
+            android:exported="true"
+            android:label="VESC Telemetry: Full Dashboard (4x2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.vesccontrolcentre.ACTION_UPDATE_TELEMETRY" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/telemetry_widget_info_4x2" />
+        </receiver>
+
+        <!-- 2x1 Profile App Widgets -->
+        <receiver
+            android:name=".widget.CrawlWidgetProvider"
+            android:exported="true"
+            android:label="VESC: Crawl Mode (2x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_crawl" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.NormalWidgetProvider"
+            android:exported="true"
+            android:label="VESC: Normal (2x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_normal" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LongRangeWidgetProvider"
+            android:exported="true"
+            android:label="VESC: Long Range (2x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_long_range" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.MaxPowerWidgetProvider"
+            android:exported="true"
+            android:label="VESC: Max Power (2x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_max_power" />
+        </receiver>
+
+    </application>
+
+</manifest>

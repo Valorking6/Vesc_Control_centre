@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">VESC Control Centre</string>
+    <string name="widget_title">VESC TELEMETRY</string>
+    <string name="widget_icon_desc">Telemetry Icon</string>
+    <string name="status_offline">OFFLINE</string>
+    <string name="default_speed">0.0 MPH</string>
+    <string name="default_voltage">0.0 V</string>
+</resources>
