@@ -5,6 +5,11 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 [![Watch the video](https://img.youtube.com/vi/58uABSbTUZc/maxresdefault.jpg)](https://www.youtube.com/watch?v=58uABSbTUZc)
 
 ---
+> [!WARNING]
+> **Safety & Usage Disclaimer**
+> 
+> * **Do Not Switch Profiles While Riding:** Never change power profiles while the vehicle is in motion. Sudden shifts in motor current limits or power delivery can cause unpredictable acceleration or braking, which may lead to an accident. **Always come to a complete stop before changing profiles.**
+> * **Settings Reset on Power Cycle:** Profile changes sent via this app's LispBM commands are applied to the active session only. They do not overwrite your core configuration. Power cycling your VESC will clear these changes and reset all parameters back to your original saved defaults.
 
 ## 📥 Installation & Setup
 
