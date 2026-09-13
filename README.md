@@ -7,7 +7,7 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 ## 📥 Installation & Setup
 
 ### 🚀 Option 1: Direct APK Download (Recommended)
-1. Download the latest pre-built `app-debug.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
+1. Download the latest pre-built `VESC Control Centre.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
 2. Open the downloaded `.apk` file on your Android device (ensure *"Install from unknown sources"* is allowed in your browser/file manager settings).
 3. Tap **Install** and open **VESC Control Centre**.
 
