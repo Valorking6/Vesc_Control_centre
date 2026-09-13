@@ -4,6 +4,36 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 ---
 
+## 📥 Installation & Setup
+
+### 🚀 Option 1: Direct APK Download (Recommended)
+1. Download the latest pre-built `app-debug.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
+2. Open the downloaded `.apk` file on your Android device (ensure *"Install from unknown sources"* is allowed in your browser/file manager settings).
+3. Tap **Install** and open **VESC Control Centre**.
+
+---
+
+### 🛠️ Option 2: Build From Source
+1. **Clone the Repository:**
+   ```bash
+   git clone https://github.com/Valorking6/Vesc_Control_centre.git
+   ```
+2. **Open in Android Studio:** Open the project directory in Android Studio (2026.1+ recommended).
+3. **Build APK:**
+   ```bash
+   ./gradlew assembleDebug
+   ```
+
+---
+
+## 🏁 Quick Start Guide
+
+1. **Grant Permissions:** Launch the app and grant **Bluetooth Scan/Connect**, **Location** (for GPX ride tracking), and **Notification** permissions when prompted.
+2. **Pair VESC:** Go to **Settings & Widgets** $\rightarrow$ **Scan VESC**, select your VESC Bluetooth module address, set motor pole pairs & wheel size, and start live telemetry!
+3. **Add Home Screen Widgets:** Long-press your phone's home screen $\rightarrow$ **Widgets** $\rightarrow$ **VESC Control Centre** to add 1-tap profile buttons and live telemetry dashboard widgets.
+
+---
+
 ## 🌟 Key Features
 
 ### 1. 📱 Unified Single-Connection BLE Architecture
@@ -81,22 +111,6 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 ---
 
-## 🛠️ Setup & Installation
-
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/your-username/VescControlcentre.git
-   ```
-2. **Open in Android Studio:** Open the project directory in Android Studio (2026.1+ recommended).
-3. **Build APK:**
-   ```bash
-   ./gradlew assembleDebug
-   ```
-4. **Grant Permissions:** Launch the app and grant **Bluetooth Scan/Connect**, **Location** (for GPX tracking), and **Notification** permissions when prompted.
-5. **Pair VESC:** Go to **Settings & Widgets** $\rightarrow$ **Scan VESC**, select your VESC Bluetooth module address, set motor pole pairs/wheel size, and start live telemetry!
-
----
-
 ## 📜 License
 
-Distributed under the MIT License. See `LICENSE` for details.
+Distributed under the **GNU General Public License v3.0 (GPLv3)**. See [`LICENSE`](LICENSE) for details.
