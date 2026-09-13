@@ -2,6 +2,8 @@
 
 A modern, feature-rich Android application designed for real-time telemetry monitoring, 1-tap profile switching, dual-motor CAN bus management, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
 
+[![Watch the video](https://img.youtube.com/vi/58uABSbTUZc/maxresdefault.jpg)](https://www.youtube.com/watch?v=58uABSbTUZc)
+
 ---
 
 ## 📥 Installation & Setup
