@@ -42,6 +42,10 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 ---
 
 ## 🌟 Key Features
+### 🔊 Engine Sound Simulator (NEW)
+* **Dynamic Audio Synthesis:** Uses Android's low-latency `SoundPool` API to play seamless custom `.ogg` engine loops.
+* **ERPM Pitch Shifting:** Reads live ERPM telemetry to dynamically scale playback pitch, matching motor load to simulated engine revs.
+* **Quick Toggle Widget:** Turn the engine sounds on or off instantly via a dedicated Home Screen widget.
 
 ### 1. 📱 Unified Single-Connection BLE Architecture
 * **Conflict-Free GATT Management:** Maintains a single persistent, thread-safe Bluetooth Low Energy (BLE) connection via the Nordic UART Service (`6e400001-b5a3-f393-e0a9-e50e24dcca9e`).
@@ -90,11 +94,13 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 ---
 
-### 5. 📁 Dual Ride Logging System
-* **Strava-Compatible GPX 1.1 Logger:** Logs GPS track points with ISO-8601 UTC timestamps and elevation. Automatically ignores `(0.0, 0.0)` uninitialized coordinates.
-* **Raw CSV Telemetry Logger:** Records millisecond-accurate timestamped motor current, battery voltage, duty cycle, MOSFET temperatures, and energy consumption.
-* **Scooter Shutdown Detection:** Automatically detects scooter power-off / BLE disconnects (`STATE_DISCONNECTED`), appends the final closing tags (`</trkseg></trk></gpx>`), flushes files to `Documents/`, updates lock screen notifications to *"VESC Disconnected - Ride logs saved"*, and pops up a visual Toast confirmation.
-
+### 📁 Dual Ride Logging & Integrated Viewer
+* **Dedicated Logs Tab:** A brand new tab inside the app to browse, manage, delete, and share your saved ride logs.
+* **Interactive Data Plotting:** Visualize your ride directly on your device. Generate X/Y graphs from your `.csv` data to compare speed, power draw, and thermals over time.
+* **Custom Save Locations:** Select an optional custom directory to store your log files.
+* **Bug Fix:** Resolved an issue where background logs were failing to finalize and save correctly upon VESC disconnection.
+* **Strava-Compatible GPX 1.1 Logger:** Logs GPS track points with UTC timestamps and elevation.
+* **Raw CSV Telemetry Logger:** Records timestamped motor current, battery voltage, duty cycle, temperatures, and energy consumption.
 ---
 
 ### 6. 🧩 Home Screen Widgets & Launcher Shortcuts
