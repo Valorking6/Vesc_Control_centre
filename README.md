@@ -2,12 +2,19 @@
 
 A modern, feature-rich Android application designed for real-time telemetry monitoring, 1-tap profile switching, dual-motor CAN bus management, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
 
+[![Watch the video](https://img.youtube.com/vi/58uABSbTUZc/maxresdefault.jpg)](https://www.youtube.com/watch?v=58uABSbTUZc)
+
 ---
+> [!WARNING]
+> **Safety & Usage Disclaimer**
+> 
+> * **Do Not Switch Profiles While Riding:** Never change power profiles while the vehicle is in motion. Sudden shifts in motor current limits or power delivery can cause unpredictable acceleration or braking, which may lead to an accident. **Always come to a complete stop before changing profiles.**
+> * **Settings Reset on Power Cycle:** Profile changes sent via this app's LispBM commands are applied to the active session only. They do not overwrite your core configuration. Power cycling your VESC will clear these changes and reset all parameters back to your original saved defaults.
 
 ## 📥 Installation & Setup
 
 ### 🚀 Option 1: Direct APK Download (Recommended)
-1. Download the latest pre-built `app-debug.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
+1. Download the latest pre-built `VESC Control Centre.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
 2. Open the downloaded `.apk` file on your Android device (ensure *"Install from unknown sources"* is allowed in your browser/file manager settings).
 3. Tap **Install** and open **VESC Control Centre**.
 
