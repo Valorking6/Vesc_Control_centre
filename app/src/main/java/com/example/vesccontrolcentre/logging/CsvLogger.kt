@@ -1,10 +1,13 @@
 package com.example.vesccontrolcentre.logging
 
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -25,19 +28,58 @@ class CsvLogger(context: Context) {
 
     init {
         try {
-            val docsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-            if (docsDir != null && !docsDir.exists()) {
-                docsDir.mkdirs()
-            }
+            val prefs = context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE)
+            val storageOption = prefs.getString("log_storage_option", "PUBLIC_DOCUMENTS") ?: "PUBLIC_DOCUMENTS"
             val timeStr = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-            val file = File(docsDir, "telemetry_log_$timeStr.csv")
+            val fileName = "telemetry_log_$timeStr.csv"
 
-            val fos = FileOutputStream(file)
-            writer = OutputStreamWriter(fos, Charsets.UTF_8)
+            var outputStream: OutputStream? = null
 
-            writer?.write("Timestamp,Time_ISO,Speed_MPH,Voltage_V,Motor_Amps,Battery_Amps,Duty_Cycle,Temp_FET_C,Temp_Motor_C,Wh_Used,Ah_Charged\n")
+            if (storageOption == "CUSTOM_SAF") {
+                val safUriStr = prefs.getString("log_custom_saf_uri", null)
+                if (!safUriStr.isNullOrEmpty()) {
+                    try {
+                        val treeUri = Uri.parse(safUriStr)
+                        val pickedDir = DocumentFile.fromTreeUri(context, treeUri)
+                        if (pickedDir != null && pickedDir.canWrite()) {
+                            val newFile = pickedDir.createFile("text/csv", fileName)
+                            if (newFile != null) {
+                                outputStream = context.contentResolver.openOutputStream(newFile.uri)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed SAF file creation, falling back: ${e.message}")
+                    }
+                }
+            }
+
+            if (outputStream == null && storageOption == "PUBLIC_DOCUMENTS") {
+                try {
+                    val publicDocsDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "VESC_Logs")
+                    if (!publicDocsDir.exists()) {
+                        publicDocsDir.mkdirs()
+                    }
+                    val file = File(publicDocsDir, fileName)
+                    outputStream = FileOutputStream(file)
+                    Log.d(TAG, "Created CSV log at Public Documents: ${file.absolutePath}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed public documents directory, falling back: ${e.message}")
+                }
+            }
+
+            if (outputStream == null) {
+                val docsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                if (docsDir != null && !docsDir.exists()) {
+                    docsDir.mkdirs()
+                }
+                val file = File(docsDir, fileName)
+                outputStream = FileOutputStream(file)
+                Log.d(TAG, "Created CSV log at App External Files: ${file.absolutePath}")
+            }
+
+            writer = OutputStreamWriter(outputStream, Charsets.UTF_8)
+            writer?.write("Timestamp_ms,Time_ISO,Speed_MPH,Voltage_V,Motor_Amps,Battery_Amps,Duty_Cycle,Temp_FET_C,Temp_Motor_C,Wh_Used,Ah_Charged,Tach_Abs,Fault_Code,Accel_X,Accel_Y,Accel_Z,Gyro_X,Gyro_Y,Gyro_Z,ADC_Throttle,ADC_Brake\n")
             writer?.flush()
-            Log.d(TAG, "CSV Log initialized at ${file.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing CSV logger: ${e.message}", e)
         }
@@ -49,24 +91,34 @@ class CsvLogger(context: Context) {
         voltage: Float,
         motorAmps: Float,
         batteryAmps: Float,
-        timestampMs: Long = System.currentTimeMillis(),
-        dutyCycle: Float = 0f,
-        tempMosfet: Float = 0f,
-        tempMotor: Float = 0f,
-        wattHoursUsed: Float = 0f,
-        ampHoursCharged: Float = 0f
+        dutyCycle: Float,
+        tempMosfet: Float,
+        tempMotor: Float,
+        wattHoursUsed: Float,
+        ampHoursCharged: Float,
+        tachAbs: Long,
+        faultCode: Int,
+        accelX: Float,
+        accelY: Float,
+        accelZ: Float,
+        gyroX: Float,
+        gyroY: Float,
+        gyroZ: Float,
+        adcThrottle: Float,
+        adcBrake: Float,
+        timestampMs: Long = System.currentTimeMillis()
     ) {
         if (isClosed || writer == null) return
         try {
             val timeIso = isoFormat.format(Date(timestampMs))
             val line = String.format(
                 Locale.US,
-                "%d,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+                "%d,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n",
                 timestampMs, timeIso, mph, voltage, motorAmps, batteryAmps,
-                dutyCycle, tempMosfet, tempMotor, wattHoursUsed, ampHoursCharged
+                dutyCycle, tempMosfet, tempMotor, wattHoursUsed, ampHoursCharged,
+                tachAbs, faultCode, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, adcThrottle, adcBrake
             )
             writer?.write(line)
-            writer?.flush()
         } catch (e: Exception) {
             Log.e(TAG, "Error logging CSV telemetry: ${e.message}", e)
         }

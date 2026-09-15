@@ -49,11 +49,12 @@ class MainActivity : ComponentActivity() {
     private fun checkPermissions() {
         val requiredPermissions = mutableListOf<String>()
 
+        requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requiredPermissions.add(Manifest.permission.BLUETOOTH_SCAN)
             requiredPermissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -68,11 +69,12 @@ class MainActivity : ComponentActivity() {
     private fun requestPermissions() {
         val requiredPermissions = mutableListOf<String>()
 
+        requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requiredPermissions.add(Manifest.permission.BLUETOOTH_SCAN)
             requiredPermissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

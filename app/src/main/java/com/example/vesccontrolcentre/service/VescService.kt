@@ -8,7 +8,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -29,8 +34,10 @@ import com.example.vesccontrolcentre.logging.GpxLogger
 import com.example.vesccontrolcentre.model.ProfileConfig
 import com.example.vesccontrolcentre.model.ProfileType
 import com.example.vesccontrolcentre.model.TelemetryData
+import com.example.vesccontrolcentre.sound.EngineSoundManager
 import com.example.vesccontrolcentre.widget.BaseProfileWidgetProvider
 import com.example.vesccontrolcentre.widget.BaseTelemetryWidget
+import com.example.vesccontrolcentre.widget.SoundToggleWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +48,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class VescService : Service() {
+class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPreferenceChangeListener {
 
     companion object {
         private const val TAG = "VescService"
@@ -112,12 +119,22 @@ class VescService : Service() {
 
     private var gpxLogger: GpxLogger? = null
     private var csvLogger: CsvLogger? = null
+    private var engineSoundManager: EngineSoundManager? = null
+    private var currentEngineSoundResId: Int = 0
 
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
     private var currentLat = 0.0
     private var currentLon = 0.0
     private var currentAlt = 0.0
+
+    private var sensorManager: SensorManager? = null
+    private var accelX = 0f
+    private var accelY = 0f
+    private var accelZ = 0f
+    private var gyroX = 0f
+    private var gyroY = 0f
+    private var gyroZ = 0f
 
     private var wasConnected = false
 
@@ -129,6 +146,7 @@ class VescService : Service() {
 
         val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
         _activeProfileState.value = prefs.getString("active_profile", null)
+        prefs.registerOnSharedPreferenceChangeListener(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -176,8 +194,8 @@ class VescService : Service() {
         wasConnected = false
 
         val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
-        val logGpx = prefs.getBoolean("log_gpx_enabled", false)
-        val logCsv = prefs.getBoolean("log_csv_enabled", false)
+        val logGpx = prefs.getBoolean("log_gpx_enabled", true)
+        val logCsv = prefs.getBoolean("log_csv_enabled", true)
 
         if (logGpx) {
             gpxLogger = GpxLogger(this)
@@ -185,6 +203,7 @@ class VescService : Service() {
         }
         if (logCsv) {
             csvLogger = CsvLogger(this)
+            startSensorUpdates()
         }
 
         val initialNotification = buildNotification(0f, 0f, false, "Connecting to VESC...")
@@ -212,28 +231,54 @@ class VescService : Service() {
                         wasConnected = true
                         updateNotification(data.mph, data.voltage, true, data.statusText)
 
+                        // Engine Sound Simulator Processing
+                        val livePrefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
+                        val soundEnabled = livePrefs.getBoolean("engine_sound_enabled", false)
+                        val soundResId = livePrefs.getInt("engine_sound_res_id", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling)
+
+                        if (soundEnabled) {
+                            if (engineSoundManager == null || currentEngineSoundResId != soundResId) {
+                                currentEngineSoundResId = soundResId
+                                if (engineSoundManager == null) {
+                                    engineSoundManager = EngineSoundManager()
+                                }
+                                engineSoundManager?.startEngineSound(this@VescService, soundResId)
+                            }
+                            engineSoundManager?.updatePitch(data.erpm)
+                        } else {
+                            if (engineSoundManager != null) {
+                                engineSoundManager?.stopEngineSound()
+                                engineSoundManager = null
+                                currentEngineSoundResId = 0
+                            }
+                        }
+
                         // Log CSV Telemetry Data
                         csvLogger?.logData(
                             mph = data.mph,
                             voltage = data.voltage,
                             motorAmps = data.motorCurrent,
                             batteryAmps = data.batteryCurrent,
-                            timestampMs = System.currentTimeMillis(),
                             dutyCycle = data.dutyCycle,
                             tempMosfet = data.tempMosfet,
                             tempMotor = data.tempMotor,
                             wattHoursUsed = data.wattHoursUsed,
-                            ampHoursCharged = data.ampHoursCharged
+                            ampHoursCharged = data.ampHoursCharged,
+                            tachAbs = data.tachometerAbs,
+                            faultCode = data.faultCode,
+                            accelX = accelX,
+                            accelY = accelY,
+                            accelZ = accelZ,
+                            gyroX = gyroX,
+                            gyroY = gyroY,
+                            gyroZ = gyroZ,
+                            adcThrottle = 0f,
+                            adcBrake = 0f,
+                            timestampMs = System.currentTimeMillis()
                         )
-
-                        // Log GPX Location Data if available
-                        if (currentLat != 0.0 || currentLon != 0.0) {
-                            gpxLogger?.logTrackPoint(currentLat, currentLon, currentAlt, System.currentTimeMillis())
-                        }
 
                         BaseTelemetryWidget.sendTelemetryBroadcast(this@VescService, data)
                     } else if (wasConnected) {
-                        // Detect Scooter Shutdown / Disconnection
                         Log.d(TAG, "Scooter disconnected after active connection. Finalizing logs...")
                         finalizeRideLogsAndStop()
                     }
@@ -251,6 +296,17 @@ class VescService : Service() {
         } else {
             vescBleManager?.updateConfig(polePairs, wheelDiameter)
             vescBleManager?.connect(deviceAddress)
+        }
+    }
+
+    override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
+        if (key == "engine_sound_enabled" && isServiceRunning) {
+            val enabled = sharedPreferences?.getBoolean("engine_sound_enabled", false) ?: false
+            if (!enabled) {
+                engineSoundManager?.stopEngineSound()
+                engineSoundManager = null
+                currentEngineSoundResId = 0
+            }
         }
     }
 
@@ -277,6 +333,46 @@ class VescService : Service() {
         vescBleManager?.applyProfile(config)
     }
 
+    private fun startSensorUpdates() {
+        try {
+            sensorManager = getSystemService(SENSOR_SERVICE) as? SensorManager
+            val accel = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            val gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+            
+            accel?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+            gyro?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting sensor updates: ${e.message}")
+        }
+    }
+    
+    private fun stopSensorUpdates() {
+        try {
+            sensorManager?.unregisterListener(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping sensor updates: ${e.message}")
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        when (event.sensor.type) {
+            Sensor.TYPE_ACCELEROMETER -> {
+                accelX = event.values[0]
+                accelY = event.values[1]
+                accelZ = event.values[2]
+            }
+            Sensor.TYPE_GYROSCOPE -> {
+                gyroX = event.values[0]
+                gyroY = event.values[1]
+                gyroZ = event.values[2]
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+    }
+
     @SuppressLint("MissingPermission")
     private fun startGpsUpdates() {
         try {
@@ -287,7 +383,21 @@ class VescService : Service() {
                     currentLon = location.longitude
                     currentAlt = location.altitude
                     if (currentLat != 0.0 || currentLon != 0.0) {
-                        gpxLogger?.logTrackPoint(currentLat, currentLon, currentAlt, System.currentTimeMillis())
+                        val speed = if (location.hasSpeed()) location.speed else 0f
+                        val bearing = if (location.hasBearing()) location.bearing else 0f
+                        val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
+                        val satellites = location.extras?.getInt("satellites", 0) ?: 0
+                        
+                        gpxLogger?.logTrackPoint(
+                            currentLat, 
+                            currentLon, 
+                            currentAlt, 
+                            speed, 
+                            bearing, 
+                            accuracy, 
+                            satellites, 
+                            System.currentTimeMillis()
+                        )
                     }
                 }
                 override fun onProviderEnabled(provider: String) {}
@@ -318,7 +428,13 @@ class VescService : Service() {
     }
 
     private fun finalizeRideLogsAndStop() {
-        Log.d(TAG, "Finalizing ride logs...")
+        Log.d(TAG, "Finalizing ride logs & stopping engine sound...")
+
+        engineSoundManager?.stopEngineSound()
+        engineSoundManager = null
+        currentEngineSoundResId = 0
+        getSharedPreferences("vesc_prefs", MODE_PRIVATE).edit { putBoolean("engine_sound_enabled", false) }
+        SoundToggleWidgetProvider.updateAllWidgets(this)
 
         gpxLogger?.closeLog()
         gpxLogger = null
@@ -327,6 +443,7 @@ class VescService : Service() {
         csvLogger = null
 
         stopGpsUpdates()
+        stopSensorUpdates()
 
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(
@@ -465,12 +582,19 @@ class VescService : Service() {
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy called. Closing loggers and cleaning up...")
+        Log.d(TAG, "onDestroy called. Stopping engine sound and closing loggers...")
+        getSharedPreferences("vesc_prefs", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(this)
+        
+        engineSoundManager?.stopEngineSound()
+        engineSoundManager = null
+        currentEngineSoundResId = 0
+
         gpxLogger?.closeLog()
         gpxLogger = null
         csvLogger?.closeLog()
         csvLogger = null
         stopGpsUpdates()
+        stopSensorUpdates()
 
         observeJob?.cancel()
         observeJob = null

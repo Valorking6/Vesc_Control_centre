@@ -5,7 +5,11 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +41,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
@@ -45,8 +53,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,11 +73,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import com.example.vesccontrolcentre.R
+import com.example.vesccontrolcentre.logging.LogFileItem
+import com.example.vesccontrolcentre.logging.LogManager
 import com.example.vesccontrolcentre.model.ProfileConfig
 import com.example.vesccontrolcentre.model.ProfileType
 import com.example.vesccontrolcentre.model.TelemetryData
 import com.example.vesccontrolcentre.service.VescService
+import com.example.vesccontrolcentre.sound.EngineSoundManager
 import com.example.vesccontrolcentre.widget.BaseTelemetryWidget
+import java.io.File
 import java.util.Locale
 
 data class BleDeviceItem(
@@ -84,6 +98,12 @@ data class MetricToggleItem(
     val defaultValue: Boolean = true
 )
 
+data class SoundOption(
+    val name: String,
+    val category: String,
+    val resId: Int
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -94,7 +114,17 @@ fun MainScreen(
     val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf("Telemetry", "Profiles", "Settings & Widgets")
+    val tabTitles = listOf("Telemetry", "Profiles", "Engine Sounds", "Ride Logs", "Settings")
+
+    var selectedLogItem by remember { mutableStateOf<LogFileItem?>(null) }
+
+    if (selectedLogItem != null) {
+        LogViewerScreen(
+            logItem = selectedLogItem!!,
+            onBack = { selectedLogItem = null }
+        )
+        return
+    }
 
     var macAddress by remember { mutableStateOf(prefs.getString("mac_address", "") ?: "") }
     var polePairsText by remember { mutableStateOf(prefs.getInt("pole_pairs", 7).toString()) }
@@ -186,7 +216,7 @@ fun MainScreen(
                         Tab(
                             selected = selectedTabIndex == index,
                             onClick = { selectedTabIndex = index },
-                            text = { Text(title, fontWeight = FontWeight.Bold) }
+                            text = { Text(title, fontWeight = FontWeight.Bold, fontSize = 11.sp) }
                         )
                     }
                 }
@@ -232,7 +262,7 @@ fun MainScreen(
                     onStartService = {
                         if (macAddress.isBlank()) {
                             Toast.makeText(context, "Please set target BLE MAC Address first!", Toast.LENGTH_SHORT).show()
-                            selectedTabIndex = 2
+                            selectedTabIndex = 4
                             return@TelemetryTab
                         }
                         saveHardwareConfig()
@@ -250,7 +280,7 @@ fun MainScreen(
                     onApplyProfile = { profileType ->
                         if (macAddress.isBlank()) {
                             Toast.makeText(context, "Please set target BLE MAC Address first!", Toast.LENGTH_SHORT).show()
-                            selectedTabIndex = 2
+                            selectedTabIndex = 4
                             return@ProfilesTab
                         }
                         saveHardwareConfig()
@@ -258,7 +288,13 @@ fun MainScreen(
                     }
                 )
 
-                2 -> SettingsAndScanTab(
+                2 -> EngineSoundsTab()
+
+                3 -> RideLogsTab(onViewLog = { item ->
+                    selectedLogItem = item
+                })
+
+                4 -> SettingsAndScanTab(
                     macAddress = macAddress,
                     onMacAddressChange = {
                         macAddress = it
@@ -347,13 +383,11 @@ fun TelemetryTab(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Speedometer Display Mode & Unit Toggle Chips
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Display Mode: Digital vs Dial
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             FilterChip(
                                 selected = speedometerMode == "DIGITAL",
@@ -376,7 +410,6 @@ fun TelemetryTab(
                             )
                         }
 
-                        // Speed Unit: MPH vs KM/H
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             FilterChip(
                                 selected = !isKmh,
@@ -738,6 +771,393 @@ fun ProfilesTab(
 }
 
 @Composable
+fun EngineSoundsTab() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
+
+    var engineSoundEnabled by remember { mutableStateOf(prefs.getBoolean("engine_sound_enabled", false)) }
+    var selectedSoundResId by remember { mutableIntStateOf(prefs.getInt("engine_sound_res_id", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling)) }
+
+    val soundOptions = remember {
+        listOf(
+            SoundOption("V8 Cylinder Engine", "Classic Internal Combustion Engine Idle", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling),
+            SoundOption("Hover Vehicle Idle", "Futuristic Sci-Fi Grav-Vehicle Hum", R.raw.snd_348857_mickboere_hover_vehicle_idle_loop),
+            SoundOption("Sci-Fi Engine", "High-Tech Cyberpunk Thruster", R.raw.snd_407540_sojan_sci_fi_engine_loop),
+            SoundOption("Synth Car Engine", "Synthesizer Performance Motor", R.raw.snd_482664_joao_janz_synth_car_engine_loop_1_1),
+            SoundOption("V8 Engine Warmup", "High Torque Racing Engine Warmup", R.raw.snd_557214_lhermanns_enginewarmup_1_loop),
+            SoundOption("Alien Space Engine", "Extraterrestrial Alien Spacecraft Sound", R.raw.snd_558975_fivebrosstopmosyt_alien_engine_loop_1),
+            SoundOption("Extractor Fan Turbine", "Jet Turbine Fan Sound Effect", R.raw.snd_618185_theplax_extractor_fan),
+            SoundOption("T4 Turbo Diesel Engine", "Heavy Duty Turbo Diesel Idle", R.raw.snd_679693_grauxonen_t4_19td_2000_engine_loop),
+            SoundOption("Spacepod Thrusters", "Space Pod Orbital Thrusters", R.raw.snd_773036_sealionstudios_spacepodthursters)
+        )
+    }
+
+    var previewManager by remember { mutableStateOf<EngineSoundManager?>(null) }
+    var previewingResId by remember { mutableIntStateOf(0) }
+    var testErpm by remember { mutableFloatStateOf(8000f) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            previewManager?.stopEngineSound()
+            previewManager = null
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Master Control Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF121824)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Engine Sound Simulator", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Simulates engine/motor audio pitched to your live VESC ERPM using low-latency SoundPool.",
+                                fontSize = 12.sp,
+                                color = Color.Gray
+                            )
+                        }
+
+                        Switch(
+                            checked = engineSoundEnabled,
+                            onCheckedChange = { checked ->
+                                engineSoundEnabled = checked
+                                prefs.edit { putBoolean("engine_sound_enabled", checked) }
+                                Toast.makeText(context, if (checked) "Engine sound enabled for ride service" else "Engine sound disabled", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+                        )
+                    }
+                }
+            }
+        }
+
+        // Live Pitch Test Slider Card
+        if (previewingResId != 0) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A5F)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("🔊 Live Audio Preview Test", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF00E5FF))
+                            OutlinedButton(
+                                onClick = {
+                                    previewManager?.stopEngineSound()
+                                    previewManager = null
+                                    previewingResId = 0
+                                }
+                            ) {
+                                Text("Stop Preview", fontSize = 12.sp, color = Color(0xFFFF5252))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            "Simulated ERPM: ${testErpm.toInt()} RPM",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+
+                        Slider(
+                            value = testErpm,
+                            onValueChange = { erpm ->
+                                testErpm = erpm
+                                previewManager?.updatePitch(erpm)
+                            },
+                            valueRange = 0f..20000f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFF00E5FF),
+                                activeTrackColor = Color(0xFF00E5FF)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sound Profiles Gallery
+        items(soundOptions) { sound ->
+            val isSelected = (sound.resId == selectedSoundResId)
+            val isPreviewing = (sound.resId == previewingResId)
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isSelected) Color(0xFF1B324A) else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(sound.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            Text(sound.category, fontSize = 12.sp, color = Color.Gray)
+                        }
+
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFF00E676), shape = RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("⚡ ACTIVE", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Button(
+                            onClick = {
+                                selectedSoundResId = sound.resId
+                                prefs.edit { putInt("engine_sound_res_id", sound.resId) }
+                                Toast.makeText(context, "Selected ${sound.name}", Toast.LENGTH_SHORT).show()
+                            },
+                            enabled = !isSelected,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (isSelected) "Active Profile" else "Select Profile", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                if (isPreviewing) {
+                                    previewManager?.stopEngineSound()
+                                    previewManager = null
+                                    previewingResId = 0
+                                } else {
+                                    previewManager?.stopEngineSound()
+                                    val manager = EngineSoundManager()
+                                    manager.startEngineSound(context, sound.resId)
+                                    manager.updatePitch(testErpm)
+                                    previewManager = manager
+                                    previewingResId = sound.resId
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (isPreviewing) "Stop Preview" else "🔊 Test Preview", fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RideLogsTab(onViewLog: (LogFileItem) -> Unit) {
+    val context = LocalContext.current
+    var logFiles by remember { mutableStateOf(LogManager.getLogFiles(context)) }
+
+    fun refreshLogs() {
+        logFiles = LogManager.getLogFiles(context)
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Ride Logs & GPS Traces", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(
+                                "${logFiles.size} log file(s) saved in Documents",
+                                fontSize = 12.sp,
+                                color = Color.Gray
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { refreshLogs() }
+                            ) {
+                                Text("Refresh", fontSize = 12.sp)
+                            }
+
+                            if (logFiles.isNotEmpty()) {
+                                Button(
+                                    onClick = {
+                                        val deletedCount = LogManager.deleteAllLogs(context)
+                                        refreshLogs()
+                                        Toast.makeText(context, "Deleted $deletedCount log file(s)", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                                ) {
+                                    Text("Delete All", fontSize = 12.sp, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (logFiles.isEmpty()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("📁 No Ride Logs Saved Yet", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Enable 'Log Ride to Strava (GPX)' or 'Log Raw Telemetry (CSV)' in the Telemetry tab before starting a ride.\n\nLogs automatically close and save when your scooter disconnects or turns off!",
+                            fontSize = 13.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+        } else {
+            items(logFiles) { item ->
+                LogFileCard(
+                    item = item,
+                    onView = { 
+                        if (item.name.endsWith(".csv", ignoreCase = true)) {
+                            onViewLog(item)
+                        } else {
+                            Toast.makeText(context, "Only CSV plotting is currently supported.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onShare = { LogManager.shareLogItem(context, item) },
+                    onDelete = {
+                        if (LogManager.deleteLogItem(context, item)) {
+                            Toast.makeText(context, "Deleted ${item.name}", Toast.LENGTH_SHORT).show()
+                            refreshLogs()
+                        } else {
+                            Toast.makeText(context, "Failed to delete file", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LogFileCard(
+    item: LogFileItem,
+    onView: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            if (item.isGpx) Color(0xFF00E5FF) else Color(0xFFFFD54F),
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (item.isGpx) "GPX (STRAVA)" else "CSV (TELEMETRY)",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    )
+                }
+
+                Text(item.formattedSize, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Gray)
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text("${item.formattedDate}  •  ${item.locationTag}", fontSize = 12.sp, color = Color.Gray)
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (item.name.endsWith(".csv", ignoreCase = true)) {
+                    Button(
+                        onClick = onView,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE040FB)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("View Plot", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                Button(
+                    onClick = onShare,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Share", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Delete", color = Color(0xFFFF5252), fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun SettingsAndScanTab(
     macAddress: String,
     onMacAddressChange: (String) -> Unit,
@@ -759,6 +1179,27 @@ fun SettingsAndScanTab(
 
     var logGpxEnabled by remember { mutableStateOf(prefs.getBoolean("log_gpx_enabled", true)) }
     var logCsvEnabled by remember { mutableStateOf(prefs.getBoolean("log_csv_enabled", true)) }
+
+    var storageOption by remember { mutableStateOf(prefs.getString("log_storage_option", "PUBLIC_DOCUMENTS") ?: "PUBLIC_DOCUMENTS") }
+    var safFolderUriStr by remember { mutableStateOf(prefs.getString("log_custom_saf_uri", "") ?: "") }
+
+    val safFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            safFolderUriStr = uri.toString()
+            storageOption = "CUSTOM_SAF"
+            prefs.edit {
+                putString("log_custom_saf_uri", uri.toString())
+                putString("log_storage_option", "CUSTOM_SAF")
+            }
+            Toast.makeText(context, "Selected custom storage folder!", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val metricsList = remember {
         listOf(
@@ -821,6 +1262,113 @@ fun SettingsAndScanTab(
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
+                    }
+                }
+            }
+        }
+
+        // Storage Location Settings
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Log Storage Location Settings", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Choose where GPX and CSV ride files are saved on your device.",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                storageOption = "PUBLIC_DOCUMENTS"
+                                prefs.edit { putString("log_storage_option", "PUBLIC_DOCUMENTS") }
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = storageOption == "PUBLIC_DOCUMENTS",
+                            onClick = {
+                                storageOption = "PUBLIC_DOCUMENTS"
+                                prefs.edit { putString("log_storage_option", "PUBLIC_DOCUMENTS") }
+                            },
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Public Documents Folder (Recommended)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Saves to /Documents/VESC_Logs/ (Easy to view in File Manager or PC)", fontSize = 11.sp, color = Color.Gray)
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                storageOption = "PRIVATE_FILES"
+                                prefs.edit { putString("log_storage_option", "PRIVATE_FILES") }
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = storageOption == "PRIVATE_FILES",
+                            onClick = {
+                                storageOption = "PRIVATE_FILES"
+                                prefs.edit { putString("log_storage_option", "PRIVATE_FILES") }
+                            },
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("App Private Storage Sandbox", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Saves to /Android/data/com.example.vesccontrolcentre/files/Documents/", fontSize = 11.sp, color = Color.Gray)
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                storageOption = "CUSTOM_SAF"
+                                prefs.edit { putString("log_storage_option", "CUSTOM_SAF") }
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = storageOption == "CUSTOM_SAF",
+                            onClick = {
+                                storageOption = "CUSTOM_SAF"
+                                prefs.edit { putString("log_storage_option", "CUSTOM_SAF") }
+                            },
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Choose Custom Storage Folder", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(
+                                if (safFolderUriStr.isNotBlank()) "Selected: $safFolderUriStr" else "Pick any folder on internal storage or SD card",
+                                fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+
+                    if (storageOption == "CUSTOM_SAF") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { safFolderLauncher.launch(null) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("📁 Pick Folder (Storage Access Framework)", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

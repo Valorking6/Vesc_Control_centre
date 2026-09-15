@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <uses-feature
         android:name="android.hardware.bluetooth_le"
@@ -49,7 +50,31 @@
         <service
             android:name=".service.VescService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|location" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.example.vesccontrolcentre.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Engine Sound Toggle Widget (1x1) -->
+        <receiver
+            android:name=".widget.SoundToggleWidgetProvider"
+            android:exported="true"
+            android:label="VESC: Engine Sound Toggle (1x1)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.vesccontrolcentre.ACTION_TOGGLE_SOUND" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_sound_toggle" />
+        </receiver>
 
         <!-- Telemetry Widget (Compact 2x1) -->
         <receiver

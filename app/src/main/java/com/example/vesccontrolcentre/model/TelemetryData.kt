@@ -11,6 +11,7 @@ data class TelemetryData(
     val tempMotor: Float = 0f,
     val wattHoursUsed: Float = 0f,
     val ampHoursCharged: Float = 0f,
+    val tachometerAbs: Long = 0L,
     val faultCode: Int = 0,
     val faultText: String = "NO FAULT",
     val isConnected: Boolean = false,

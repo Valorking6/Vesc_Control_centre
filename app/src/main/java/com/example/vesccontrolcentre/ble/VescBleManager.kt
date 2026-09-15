@@ -369,15 +369,19 @@ class VescBleManager(
         if (payload.size >= 29) {
             val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
 
-            val tempMosfet = buffer.getShort(1).toFloat() / 10.0f
-            val tempMotor = buffer.getShort(3).toFloat() / 10.0f
-            val motorCurrent = buffer.getInt(5).toFloat() / 100.0f
-            val batteryCurrent = buffer.getInt(9).toFloat() / 100.0f
-            val dutyCycle = (buffer.getShort(21).toFloat() / 1000.0f) * 100.0f
+            val tempMosfet = if (payload.size >= 3) buffer.getShort(1).toFloat() / 10.0f else 0f
+            val tempMotor = if (payload.size >= 5) buffer.getShort(3).toFloat() / 10.0f else 0f
+            val motorCurrent = if (payload.size >= 9) buffer.getInt(5).toFloat() / 100.0f else 0f
+            val batteryCurrent = if (payload.size >= 13) buffer.getInt(9).toFloat() / 100.0f else 0f
+            val dutyCycle = if (payload.size >= 23) (buffer.getShort(21).toFloat() / 1000.0f) * 100.0f else 0f
             val rawErpm = buffer.getInt(23).toFloat()
             val rawVoltage = buffer.getShort(27).toFloat() / 10.0f
             val ampHoursCharged = if (payload.size >= 37) buffer.getInt(33).toFloat() / 10000.0f else 0f
             val wattHoursUsed = if (payload.size >= 41) buffer.getInt(37).toFloat() / 10000.0f else 0f
+            
+            // Tachometer Absolute
+            val tachAbs = if (payload.size >= 53) buffer.getInt(49).toLong() else 0L
+
             val faultCode = if (payload.size >= 54) payload[53].toInt() and 0xFF else 0
             val faultText = getFaultString(faultCode)
 
@@ -398,6 +402,7 @@ class VescBleManager(
                 tempMotor = tempMotor,
                 wattHoursUsed = wattHoursUsed,
                 ampHoursCharged = ampHoursCharged,
+                tachometerAbs = tachAbs,
                 faultCode = faultCode,
                 faultText = faultText,
                 isConnected = true,
