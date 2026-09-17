@@ -14,6 +14,9 @@ data class TelemetryData(
     val tachometerAbs: Long = 0L,
     val faultCode: Int = 0,
     val faultText: String = "NO FAULT",
+    val adcThrottle: Float = 0f,
+    val adcBrake: Float = 0f,
+    val activeRideDurationMs: Long = 0L,
     val isConnected: Boolean = false,
     val statusText: String = "Disconnected"
 )

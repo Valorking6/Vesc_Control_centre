@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -1,10 +1,12 @@
 package com.example.vesccontrolcentre.logging
 
 import android.content.Context
+import android.location.Location
 import android.net.Uri
 import android.os.Environment
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.example.vesccontrolcentre.health.HealthConnectManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -94,6 +96,12 @@ class GpxLogger(context: Context) {
         }
     }
 
+    private val trackPoints = mutableListOf<HealthConnectManager.GpsPoint>()
+    private var totalDistanceMeters = 0.0f
+    private var lastLat = 0.0
+    private var lastLon = 0.0
+    private var wasStationary = false
+
     @Synchronized
     fun logTrackPoint(
         lat: Double,
@@ -107,6 +115,23 @@ class GpxLogger(context: Context) {
     ) {
         if (isClosed || writer == null) return
         if (lat == 0.0 && lon == 0.0) return
+
+        if (speedMetersPerSec < 0.5f) {
+            if (wasStationary) return
+            wasStationary = true
+        } else {
+            wasStationary = false
+        }
+
+        trackPoints.add(HealthConnectManager.GpsPoint(lat, lon, alt, timestampMs))
+
+        if (lastLat != 0.0 && lastLon != 0.0) {
+            val results = FloatArray(1)
+            Location.distanceBetween(lastLat, lastLon, lat, lon, results)
+            totalDistanceMeters += results[0]
+        }
+        lastLat = lat
+        lastLon = lon
 
         try {
             val timeIso = isoFormat.format(Date(timestampMs))
@@ -136,6 +161,9 @@ class GpxLogger(context: Context) {
             Log.e(TAG, "Error logging GPX track point: ${e.message}", e)
         }
     }
+
+    fun getGpsTrackPoints(): List<HealthConnectManager.GpsPoint> = trackPoints.toList()
+    fun getTotalDistanceMeters(): Float = totalDistanceMeters
 
     @Synchronized
     fun closeLog() {

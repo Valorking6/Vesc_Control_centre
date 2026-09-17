@@ -38,6 +38,7 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
         const val EXTRA_FAULT_CODE = "extra_fault_code"
         const val EXTRA_FAULT_TEXT = "extra_fault_text"
         const val EXTRA_IS_CONNECTED = "extra_is_connected"
+        const val EXTRA_ACTIVE_RIDE_DURATION_MS = "extra_active_ride_duration_ms"
 
         fun sendTelemetryBroadcast(context: Context, data: TelemetryData) {
             val classes = listOf(
@@ -63,6 +64,7 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                     putExtra(EXTRA_FAULT_CODE, data.faultCode)
                     putExtra(EXTRA_FAULT_TEXT, data.faultText)
                     putExtra(EXTRA_IS_CONNECTED, data.isConnected)
+                    putExtra(EXTRA_ACTIVE_RIDE_DURATION_MS, data.activeRideDurationMs)
                 }
                 context.sendBroadcast(intent)
             }
@@ -96,6 +98,7 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                 ampHoursCharged = intent.getFloatExtra(EXTRA_AMP_HOURS_CHARGED, 0f),
                 faultCode = intent.getIntExtra(EXTRA_FAULT_CODE, 0),
                 faultText = intent.getStringExtra(EXTRA_FAULT_TEXT) ?: "NO FAULT",
+                activeRideDurationMs = intent.getLongExtra(EXTRA_ACTIVE_RIDE_DURATION_MS, 0L),
                 isConnected = intent.getBooleanExtra(EXTRA_IS_CONNECTED, false)
             )
 
@@ -179,6 +182,11 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                 }
 
                 if (layoutId == R.layout.widget_telemetry_2x2) {
+                    val sec = (data.activeRideDurationMs / 1000) % 60
+                    val min = (data.activeRideDurationMs / (1000 * 60)) % 60
+                    val hrs = (data.activeRideDurationMs / (1000 * 60 * 60))
+                    val activeTimeStr = if (hrs > 0) String.format(Locale.US, "%d:%02d:%02d", hrs, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
+
                     views.setTextViewText(
                         R.id.widget_detail_1,
                         if (showMotorCurrent) String.format(Locale.US, "Motor: %.1fA", data.motorCurrent) else ""
@@ -193,7 +201,7 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                     )
                     views.setTextViewText(
                         R.id.widget_detail_4,
-                        if (showDutyCycle) String.format(Locale.US, "Duty: %.1f%%", data.dutyCycle) else ""
+                        "Time: $activeTimeStr"
                     )
 
                     if (showFaultCodes && data.faultCode > 0) {
@@ -203,6 +211,11 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                         views.setViewVisibility(R.id.widget_fault_banner, View.GONE)
                     }
                 } else {
+                    val sec = (data.activeRideDurationMs / 1000) % 60
+                    val min = (data.activeRideDurationMs / (1000 * 60)) % 60
+                    val hrs = (data.activeRideDurationMs / (1000 * 60 * 60))
+                    val activeTimeStr = if (hrs > 0) String.format(Locale.US, "%d:%02d:%02d", hrs, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
+
                     views.setTextViewText(R.id.widget_m1, if (showMotorCurrent) String.format(Locale.US, "Motor: %.1fA", data.motorCurrent) else "")
                     views.setTextViewText(R.id.widget_m2, if (showBatteryCurrent) String.format(Locale.US, "Battery: %.1fA", data.batteryCurrent) else "")
                     views.setTextViewText(R.id.widget_m3, if (showDutyCycle) String.format(Locale.US, "Duty: %.1f%%", data.dutyCycle) else "")
@@ -210,7 +223,7 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                     views.setTextViewText(R.id.widget_m5, if (showTempMotor) String.format(Locale.US, "Motor: %.1f°C", data.tempMotor) else "")
                     views.setTextViewText(R.id.widget_m6, if (showErpm) String.format(Locale.US, "ERPM: %.0f", data.erpm) else "")
                     views.setTextViewText(R.id.widget_m7, if (showWattHours) String.format(Locale.US, "Energy: %.1fWh", data.wattHoursUsed) else "")
-                    views.setTextViewText(R.id.widget_m8, if (showAmpHoursCharged) String.format(Locale.US, "Regen: %.2fAh", data.ampHoursCharged) else "")
+                    views.setTextViewText(R.id.widget_m8, "Time: $activeTimeStr")
                     views.setTextViewText(R.id.widget_fault_text, if (showFaultCodes) "Fault: ${data.faultText}" else "")
                 }
             }

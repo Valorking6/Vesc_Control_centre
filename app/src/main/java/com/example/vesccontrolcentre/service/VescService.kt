@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.example.vesccontrolcentre.health.HealthConnectManager
 import java.util.Locale
 
 class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPreferenceChangeListener {
@@ -205,8 +206,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             csvLogger = CsvLogger(this)
             startSensorUpdates()
         }
-
-        val initialNotification = buildNotification(0f, 0f, false, "Connecting to VESC...")
+        val initialNotification = buildNotification(null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -229,7 +229,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
                     if (data.isConnected) {
                         wasConnected = true
-                        updateNotification(data.mph, data.voltage, true, data.statusText)
+                        updateNotification(data)
 
                         // Engine Sound Simulator Processing
                         val livePrefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
@@ -244,7 +244,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                                 }
                                 engineSoundManager?.startEngineSound(this@VescService, soundResId)
                             }
-                            engineSoundManager?.updatePitch(data.erpm)
+                            engineSoundManager?.updatePitchAndVolume(data.erpm, data.mph)
                         } else {
                             if (engineSoundManager != null) {
                                 engineSoundManager?.stopEngineSound()
@@ -272,8 +272,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                             gyroX = gyroX,
                             gyroY = gyroY,
                             gyroZ = gyroZ,
-                            adcThrottle = 0f,
-                            adcBrake = 0f,
+                            adcThrottle = data.adcThrottle,
+                            adcBrake = data.adcBrake,
+                            activeRideDurationMs = data.activeRideDurationMs,
                             timestampMs = System.currentTimeMillis()
                         )
 
@@ -436,6 +437,29 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         getSharedPreferences("vesc_prefs", MODE_PRIVATE).edit { putBoolean("engine_sound_enabled", false) }
         SoundToggleWidgetProvider.updateAllWidgets(this)
 
+        val totalActiveTimeMs = _telemetryState.value.activeRideDurationMs
+
+        val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
+        val syncHealthConnect = prefs.getBoolean("sync_health_connect", false)
+
+        val gpsTrackPoints = gpxLogger?.getGpsTrackPoints() ?: emptyList()
+        val totalDistanceMeters = gpxLogger?.getTotalDistanceMeters() ?: 0f
+
+        if (syncHealthConnect && totalActiveTimeMs > 0) {
+            val healthManager = HealthConnectManager(this)
+            val startTimeMs = System.currentTimeMillis() - totalActiveTimeMs
+            val endTimeMs = System.currentTimeMillis()
+
+            serviceScope.launch(Dispatchers.IO) {
+                healthManager.writeExerciseSession(
+                    startTimeMs = startTimeMs,
+                    endTimeMs = endTimeMs,
+                    totalDistanceMeters = totalDistanceMeters,
+                    gpsTrack = gpsTrackPoints
+                )
+            }
+        }
+
         gpxLogger?.closeLog()
         gpxLogger = null
 
@@ -475,9 +499,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     }
 
     @SuppressLint("MissingPermission")
-    private fun updateNotification(mph: Float, voltage: Float, isConnected: Boolean, statusText: String) {
+    private fun updateNotification(data: TelemetryData) {
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val notification = buildNotification(mph, voltage, isConnected, statusText)
+        val notification = buildNotification(data)
         try {
             notificationManager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
@@ -514,12 +538,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         }
     }
 
-    private fun buildNotification(
-        mph: Float,
-        voltage: Float,
-        isConnected: Boolean,
-        statusText: String
-    ): Notification {
+    private fun buildNotification(data: TelemetryData?): Notification {
         val mainIntent = Intent(this, MainActivity::class.java)
         val contentPendingIntent = PendingIntent.getActivity(
             this,
@@ -528,28 +547,26 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopIntent = Intent(this, VescService::class.java).apply {
-            action = ACTION_STOP_TELEMETRY
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         val activeProfile = _activeProfileState.value ?: "Default"
 
-        val title = if (isConnected) {
-            String.format(Locale.US, "%.1f MPH | %.1f V [%s]", mph, voltage, activeProfile)
+        val title = if (data?.isConnected == true) {
+            "VESC Control Centre [$activeProfile]"
         } else {
-            "VESC Control ($statusText)"
+            "VESC Control Centre (${data?.statusText ?: "Connecting..."})"
         }
 
-        val contentText = if (isConnected) {
-            String.format(Locale.US, "Voltage: %.1fV - Profile: %s Active", voltage, activeProfile)
+        val contentText = if (data?.isConnected == true) {
+            val seconds = (data.activeRideDurationMs / 1000) % 60
+            val minutes = (data.activeRideDurationMs / (1000 * 60)) % 60
+            val hours = (data.activeRideDurationMs / (1000 * 60 * 60))
+            val timeStr = if (hours > 0) {
+                String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format(Locale.US, "%02d:%02d", minutes, seconds)
+            }
+            String.format(Locale.US, "Speed: %.1f MPH | Battery: %.1f V | Amps: %.1f A | Time: %s", data.mph, data.voltage, data.batteryCurrent, timeStr)
         } else {
-            "Status: $statusText"
+            "Status: ${data?.statusText ?: "Connecting..."}"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -561,7 +578,6 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(contentPendingIntent)
-            .addAction(R.drawable.ic_telemetry, "Disconnect", stopPendingIntent)
             .build()
     }
 

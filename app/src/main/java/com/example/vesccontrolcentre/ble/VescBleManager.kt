@@ -48,6 +48,7 @@ class VescBleManager(
         val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private const val COMM_GET_VALUES: Byte = 0x04
+        private const val COMM_GET_DECODED_ADC: Byte = 0x35
         private const val COMM_LISP_REPL_CMD: Byte = 138.toByte()
         private const val POLL_INTERVAL_MS = 250L
     }
@@ -57,6 +58,12 @@ class VescBleManager(
 
     private val _profileEvents = MutableSharedFlow<String>()
     val profileEvents: SharedFlow<String> = _profileEvents.asSharedFlow()
+
+    private var latestAdcThrottle = 0f
+    private var latestAdcBrake = 0f
+    
+    private var activeRideDurationMs = 0L
+    private var lastSuccessfulPollMs = 0L
 
     private var bluetoothGatt: BluetoothGatt? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
@@ -174,13 +181,17 @@ class VescBleManager(
 
     private fun startPolling() {
         stopPolling()
+        activeRideDurationMs = 0L
+        lastSuccessfulPollMs = 0L
         pollingJob = scope.launch {
             Log.d(TAG, "Starting polling loop...")
             while (true) {
                 if (isConnected && !isPollingPaused) {
                     sendCommGetValues()
+                    delay(50) // Small delay between requests to not overwhelm the BLE stack
+                    sendCommGetDecodedAdc()
                 }
-                delay(POLL_INTERVAL_MS)
+                delay(POLL_INTERVAL_MS - 50)
             }
         }
     }
@@ -196,6 +207,18 @@ class VescBleManager(
             val rxChar = rxCharacteristic ?: return
 
             val payload = byteArrayOf(COMM_GET_VALUES)
+            val packet = framePacket(payload)
+
+            writePacketToGatt(gatt, rxChar, packet, chunkDelayMs = 0)
+        }
+    }
+
+    private suspend fun sendCommGetDecodedAdc() {
+        bleMutex.withLock {
+            val gatt = bluetoothGatt ?: return
+            val rxChar = rxCharacteristic ?: return
+
+            val payload = byteArrayOf(COMM_GET_DECODED_ADC)
             val packet = framePacket(payload)
 
             writePacketToGatt(gatt, rxChar, packet, chunkDelayMs = 0)
@@ -364,50 +387,73 @@ class VescBleManager(
     }
 
     private fun parseVescPayload(payload: ByteArray) {
-        if (payload.isEmpty() || payload[0] != COMM_GET_VALUES) return
+        if (payload.isEmpty()) return
 
-        if (payload.size >= 29) {
-            val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+        when (payload[0]) {
+            COMM_GET_VALUES -> {
+                if (payload.size >= 29) {
+                    val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
 
-            val tempMosfet = if (payload.size >= 3) buffer.getShort(1).toFloat() / 10.0f else 0f
-            val tempMotor = if (payload.size >= 5) buffer.getShort(3).toFloat() / 10.0f else 0f
-            val motorCurrent = if (payload.size >= 9) buffer.getInt(5).toFloat() / 100.0f else 0f
-            val batteryCurrent = if (payload.size >= 13) buffer.getInt(9).toFloat() / 100.0f else 0f
-            val dutyCycle = if (payload.size >= 23) (buffer.getShort(21).toFloat() / 1000.0f) * 100.0f else 0f
-            val rawErpm = buffer.getInt(23).toFloat()
-            val rawVoltage = buffer.getShort(27).toFloat() / 10.0f
-            val ampHoursCharged = if (payload.size >= 37) buffer.getInt(33).toFloat() / 10000.0f else 0f
-            val wattHoursUsed = if (payload.size >= 41) buffer.getInt(37).toFloat() / 10000.0f else 0f
-            
-            // Tachometer Absolute
-            val tachAbs = if (payload.size >= 53) buffer.getInt(49).toLong() else 0L
+                    val tempMosfet = buffer.getShort(1).toFloat() / 10.0f
+                    val tempMotor = buffer.getShort(3).toFloat() / 10.0f
+                    val motorCurrent = buffer.getInt(5).toFloat() / 100.0f
+                    val batteryCurrent = buffer.getInt(9).toFloat() / 100.0f
+                    val dutyCycle = (buffer.getShort(21).toFloat() / 1000.0f) * 100.0f
+                    val rawErpm = buffer.getInt(23).toFloat()
+                    val rawVoltage = buffer.getShort(27).toFloat() / 10.0f
+                    val ampHoursCharged = if (payload.size >= 37) buffer.getInt(33).toFloat() / 10000.0f else 0f
+                    val wattHoursUsed = if (payload.size >= 41) buffer.getInt(37).toFloat() / 10000.0f else 0f
 
-            val faultCode = if (payload.size >= 54) payload[53].toInt() and 0xFF else 0
-            val faultText = getFaultString(faultCode)
+                    // Tachometer Absolute
+                    val tachAbs = if (payload.size >= 53) buffer.getInt(49).toLong() else 0L
 
-            val calculatedMph = calculateMph(
-                erpm = rawErpm,
-                polePairs = this.polePairs,
-                wheelDiameterInches = this.wheelDiameterInches
-            )
+                    val faultCode = if (payload.size >= 54) payload[53].toInt() and 0xFF else 0
+                    val faultText = getFaultString(faultCode)
 
-            _telemetryData.value = TelemetryData(
-                mph = calculatedMph,
-                voltage = rawVoltage,
-                erpm = rawErpm,
-                motorCurrent = motorCurrent,
-                batteryCurrent = batteryCurrent,
-                dutyCycle = dutyCycle,
-                tempMosfet = tempMosfet,
-                tempMotor = tempMotor,
-                wattHoursUsed = wattHoursUsed,
-                ampHoursCharged = ampHoursCharged,
-                tachometerAbs = tachAbs,
-                faultCode = faultCode,
-                faultText = faultText,
-                isConnected = true,
-                statusText = "Connected"
-            )
+                    val calculatedMph = calculateMph(
+                        erpm = rawErpm,
+                        polePairs = this.polePairs,
+                        wheelDiameterInches = this.wheelDiameterInches
+                    )
+
+                    val currentTimeMs = System.currentTimeMillis()
+                    if (lastSuccessfulPollMs > 0) {
+                        val delta = currentTimeMs - lastSuccessfulPollMs
+                        if (calculatedMph > 0.5f) {
+                            activeRideDurationMs += delta
+                        }
+                    }
+                    lastSuccessfulPollMs = currentTimeMs
+
+                    _telemetryData.value = TelemetryData(
+                        mph = calculatedMph,
+                        voltage = rawVoltage,
+                        erpm = rawErpm,
+                        motorCurrent = motorCurrent,
+                        batteryCurrent = batteryCurrent,
+                        dutyCycle = dutyCycle,
+                        tempMosfet = tempMosfet,
+                        tempMotor = tempMotor,
+                        wattHoursUsed = wattHoursUsed,
+                        ampHoursCharged = ampHoursCharged,
+                        tachometerAbs = tachAbs,
+                        faultCode = faultCode,
+                        faultText = faultText,
+                        adcThrottle = latestAdcThrottle,
+                        adcBrake = latestAdcBrake,
+                        activeRideDurationMs = activeRideDurationMs,
+                        isConnected = true,
+                        statusText = "Connected"
+                    )
+                }
+            }
+            COMM_GET_DECODED_ADC -> {
+                if (payload.size >= 9) {
+                    val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+                    latestAdcThrottle = buffer.getFloat(1)
+                    latestAdcBrake = buffer.getFloat(5)
+                }
+            }
         }
     }
 

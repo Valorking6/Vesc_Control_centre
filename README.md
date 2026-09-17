@@ -1,20 +1,35 @@
-# ⚡ VESC Control Centre
+# ⚡ VESC Control Centre (v1.1)
 
-A modern, feature-rich Android application designed for real-time telemetry monitoring, 1-tap profile switching, dual-motor CAN bus management, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
+A modern, feature-rich Android application designed for real-time telemetry monitoring, 1-tap profile switching, dual-motor CAN bus management, Health Connect integration, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
 
 [![Watch the video](https://img.youtube.com/vi/58uABSbTUZc/maxresdefault.jpg)](https://www.youtube.com/watch?v=58uABSbTUZc)
 
 ---
+
 > [!WARNING]
 > **Safety & Usage Disclaimer**
 > 
 > * **Do Not Switch Profiles While Riding:** Never change power profiles while the vehicle is in motion. Sudden shifts in motor current limits or power delivery can cause unpredictable acceleration or braking, which may lead to an accident. **Always come to a complete stop before changing profiles.**
 > * **Settings Reset on Power Cycle:** Profile changes sent via this app's LispBM commands are applied to the active session only. They do not overwrite your core configuration. Power cycling your VESC will clear these changes and reset all parameters back to your original saved defaults.
 
+---
+
+## 🚀 What's New in v1.1
+
+- [x] **Native Health Connect Syncing & GPS Route Mapping:** Automatically syncs completed scooter rides directly to Android's **Health Connect** datastore as `BIKING` exercise sessions with full `ExerciseRoute` GPS track points and total distance.
+- [x] **Lock Screen Persistent Telemetry Dashboard:** Ongoing foreground notification (`NotificationCompat.VISIBILITY_PUBLIC`) rendered directly on the lock screen with a live line summary (`Speed: XX.X MPH | Battery: XX.X V | Amps: XX.X A | Time: MM:SS`).
+- [x] **Auto-Pausing Active Ride Duration Timer:** Calculates moving time (`speedMph > 0.5f`) and automatically freezes when stationary, providing exact active duration on the UI dashboard, widgets, lock screen, and CSV exports.
+- [x] **Dynamic Home Screen Widgets:** 1x1 Engine Sound Toggle widget, 4 Profile Switcher widgets (2x1), and multi-size Live Telemetry Widgets (2x1, 2x2, 4x2) with digital and dial gauge options.
+- [x] **GPS Stationary Drift Filter ("Spiderwebbing" Removal):** Discards stationary GPS jitter points at red lights while preserving the exact stopping coordinate to render clean route maps on GPX and Health Connect.
+- [x] **Interactive X/Y Telemetry Data Plotter:** In-app `.csv` log viewer (`LogViewerScreen.kt`) to graph and analyze Speed, Voltage, Amps, Temperatures, G-Forces, Gyro Lean Angles, and ADC Throttle/Brake inputs.
+- [x] **Interleaved BLE ADC Telemetry Polling:** Polls `COMM_GET_DECODED_ADC` (`0x35`) alongside standard telemetry to record real-time thumb input voltages.
+
+---
+
 ## 📥 Installation & Setup
 
 ### 🚀 Option 1: Direct APK Download (Recommended)
-1. Download the latest pre-built `VESC Control Centre.apk` directly from the [GitHub Releases / Releases Folder](https://github.com/Valorking6/Vesc_Control_centre/releases).
+1. Download the latest pre-built `VESC Control Centre v1.1.apk` directly from the [GitHub Releases](https://github.com/Valorking6/Vesc_Control_centre/releases).
 2. Open the downloaded `.apk` file on your Android device (ensure *"Install from unknown sources"* is allowed in your browser/file manager settings).
 3. Tap **Install** and open **VESC Control Centre**.
 
@@ -35,40 +50,40 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 ## 🏁 Quick Start Guide
 
-1. **Grant Permissions:** Launch the app and grant **Bluetooth Scan/Connect**, **Location** (for GPX ride tracking), and **Notification** permissions when prompted.
+1. **Grant Permissions:** Launch the app and grant **Bluetooth Scan/Connect**, **Location** (for GPX/Health Connect route tracking), **Notifications**, and optional **Health Connect** permissions when prompted.
 2. **Pair VESC:** Go to **Settings & Widgets** $\rightarrow$ **Scan VESC**, select your VESC Bluetooth module address, set motor pole pairs & wheel size, and start live telemetry!
-3. **Add Home Screen Widgets:** Long-press your phone's home screen $\rightarrow$ **Widgets** $\rightarrow$ **VESC Control Centre** to add 1-tap profile buttons and live telemetry dashboard widgets.
+3. **Add Home Screen Widgets:** Long-press your phone's home screen $\rightarrow$ **Widgets** $\rightarrow$ **VESC Control Centre** to add profile buttons, telemetry widgets, and sound toggles.
 
 ---
 
 ## 🌟 Key Features
-### 🔊 Engine Sound Simulator (NEW)
-* **Dynamic Audio Synthesis:** Uses Android's low-latency `SoundPool` API to play seamless custom `.ogg` engine loops.
-* **ERPM Pitch Shifting:** Reads live ERPM telemetry to dynamically scale playback pitch, matching motor load to simulated engine revs.
-* **Quick Toggle Widget:** Turn the engine sounds on or off instantly via a dedicated Home Screen widget.
 
-### 1. 📱 Unified Single-Connection BLE Architecture
-* **Conflict-Free GATT Management:** Maintains a single persistent, thread-safe Bluetooth Low Energy (BLE) connection via the Nordic UART Service (`6e400001-b5a3-f393-e0a9-e50e24dcca9e`).
-* **Interleaved Commands:** Seamlessly alternates continuous 250ms live telemetry polling (`COMM_GET_VALUES`) with profile modification commands without GATT collisions or disconnections.
+### 1. 🔊 Engine Sound Simulator
+* **Dynamic Audio Synthesis:** Uses Android's low-latency `SoundPool` API to play seamless custom `.ogg` engine loops.
+* **ERPM Pitch & Speed Volume Scaling:** Reads live ERPM telemetry to pitch-shift revs, with asymmetric volume smoothing (0.15 attack, 0.50 decay) across a 2 to 12 MPH speed range and immediate hard-stop muting.
+* **Library of 11 Sound Loops:** Includes V8 Cylinder Engine, Electric Engine Whine (Standard & Louder), Sci-Fi Thruster, Hover Vehicle, Spacepod, and Turbo Diesel.
 
 ---
 
-### 2. ⚡ 1-Tap Profile Switcher (Powered by LispBM)
+### 2. 📱 Unified Single-Connection BLE Architecture
+* **Conflict-Free GATT Management:** Maintains a single persistent, thread-safe Bluetooth Low Energy (BLE) connection via the Nordic UART Service (`6e400001-b5a3-f393-e0a9-e50e24dcca9e`).
+* **Interleaved Telemetry & ADC Polling:** Interleaves standard `COMM_GET_VALUES` telemetry polling with `COMM_GET_DECODED_ADC` (`0x35`) to capture exact raw throttle/brake inputs (`ADC1`/`ADC2`).
+
+---
+
+### 3. ⚡ 1-Tap Profile Switcher (Powered by LispBM)
 * **4 Customizable Profiles:**
-  * 🐢 **Crawl Mode:** Smooth throttle & restricted torque for technical terrain or low-speed crawling.
+  * 🐢 **Crawl Mode:** Restricted torque for technical terrain or low-speed maneuvers.
   * ⚡ **Normal:** Balanced daily commute setup.
   * 🔋 **Long Range:** Optimized efficiency to conserve battery capacity.
   * 🚀 **Max Power:** Peak acceleration and full current/wattage output.
-* **Custom Limit Editor:** Users can edit and persist custom values for:
-  * **Motor Current Max ($A$)** (`l-current-max`)
-  * **Battery Current Max ($A$)** (`l-in-current-max`)
-  * **Max Power ($W$)** (`l-watt-max`)
-* **LispBM Command Execution:** Profile changes generate and transmit LispBM REPL packets (`COMM_LISP_REPL_CMD` - byte `138`) directly to VESC controllers running LispBM firmware.
+* **Custom Limit Editor:** Edit and persist custom values for Motor Current Max (`l-current-max`), Battery Current Max (`l-in-current-max`), and Max Power (`l-watt-max`).
+* **LispBM REPL Packets:** Generates and transmits LispBM packets (`COMM_LISP_REPL_CMD` - byte `138`) directly to VESC controllers.
 
 ---
 
-### 3. 📡 Dual VESC / CAN Bus Forwarding
-* **Dual ESC Support:** Profile commands are executed on the master VESC (connected via BLE) and automatically forwarded to secondary motor controllers across the CAN bus.
+### 4. 📡 Dual VESC / CAN Bus Forwarding
+* **Dual ESC Support:** Profile commands executed on the master VESC are automatically forwarded to secondary motor controllers across the CAN bus.
 * **Configurable Secondary CAN ID:** Target a specific secondary ESC (e.g., CAN ID `53`, `1`, `2`) or set CAN ID to **`255` for CAN Broadcast** to update all motor controllers on the CAN bus simultaneously.
 
 ```lisp
@@ -81,35 +96,25 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 ---
 
-### 4. ⏱️ Live Telemetry & Speedometer Dial
-* **Comprehensive Metrics:**
-  * **Speed** (3-digit digital readout or speedometer dial)
-  * **Battery Voltage ($V$)** & **Duty Cycle ($\%$)**
-  * **Motor Current ($A$)** & **Battery Current ($A$)**
-  * **Controller MOSFET Temp ($^\circ\text{C}$)** & **Motor Temp ($^\circ\text{C}$)**
-  * **ERPM**, **Energy Consumed ($Wh$)**, and **Regen Braking ($Ah$)**
-  * **Live Diagnostic Fault Codes** (`OVER_TEMP`, `OVER_VOLTAGE`, `DRV_FAULT`, etc.)
-* **Speedometer Dial Gauge:** Interactive 240° Canvas gauge with dynamic sweep gradient (Cyan $\rightarrow$ Green $\rightarrow$ Yellow $\rightarrow$ Red), tick marks, rotating needle indicator, and 3-digit speed readout.
-* **Speed Unit Switch:** Toggle between **MPH** and **KM/H** ($1 \text{ MPH} = 1.60934 \text{ KM/H}$).
+### 5. ⏱️ Live Telemetry & Speedometer Dial
+* **Comprehensive Metrics:** Speed (Digital or 240° Analog Dial), Voltage, Duty Cycle, Motor & Battery Current, MOSFET & Motor Temps, ERPM, Watt-Hours Used, Regen Ah, and Fault Diagnostic Warnings.
+* **Active Ride Duration Clock:** Live moving-time clock on the UI dashboard that automatically pauses when stopped.
+* **Speed Unit Switch:** Toggle between **MPH** and **KM/H**.
 
 ---
 
-### 📁 Dual Ride Logging & Integrated Viewer
-* **Dedicated Logs Tab:** A brand new tab inside the app to browse, manage, delete, and share your saved ride logs.
-* **Interactive Data Plotting:** Visualize your ride directly on your device. Generate X/Y graphs from your `.csv` data to compare speed, power draw, and thermals over time.
-* **Custom Save Locations:** Select an optional custom directory to store your log files.
-* **Bug Fix:** Resolved an issue where background logs were failing to finalize and save correctly upon VESC disconnection.
-* **Strava-Compatible GPX 1.1 Logger:** Logs GPS track points with UTC timestamps and elevation.
-* **Raw CSV Telemetry Logger:** Records timestamped motor current, battery voltage, duty cycle, temperatures, and energy consumption.
+### 6. 📁 Ride Logging, Storage Access & X/Y Data Plotter
+* **Interactive Data Plotter (`LogViewerScreen`):** Open any `.csv` ride log directly in the app to plot interactive X/Y line charts comparing Speed, Voltage, Amps, Temperatures, G-Forces (`Accel_X/Y/Z`), Gyro Lean Angles (`Gyro_X/Y/Z`), and `ADC_Throttle`/`ADC_Brake` inputs.
+* **Storage Location Options:** Save logs to *Public Documents (`/Documents/VESC_Logs/`)*, *App Private Sandbox*, or pick a custom folder using Android's *Storage Access Framework (SAF)*.
+* **Strava-Compatible GPX 1.1 Logger:** Logs track points with `<speed>`, `<course>`, `<hdop>`, and `<sat>` tags.
+
 ---
 
-### 6. 🧩 Home Screen Widgets & Launcher Shortcuts
-* **4 Profile Widgets (2x1):** Quick 1-tap profile switching from the home screen with real-time active status badges (`⚡ ACTIVE` vs `OFF`).
-* **3 Telemetry Widget Sizes:**
-  * **Compact (2x1):** Quick 2-metric status bar.
-  * **Standard (2x2):** Speedometer gauge/digits + 4 customizable metrics.
-  * **Full Dashboard (4x2):** Comprehensive live dashboard showing up to 8 customizable metrics + fault diagnostic alerts.
-* **Widget Metrics Toggles:** Customize which VESC variables appear on home screen widgets via settings.
+### 7. 🧩 Widgets & Health Sync
+* **1x1 Engine Sound Toggle Widget**
+* **4 Profile Widgets (2x1)** with active state indicators.
+* **3 Telemetry Widget Sizes (2x1, 2x2, 4x2)** with digital/dial gauge modes and live active ride duration.
+* **Health Connect Auto-Sync** on scooter disconnection.
 
 ---
 
@@ -117,6 +122,7 @@ A modern, feature-rich Android application designed for real-time telemetry moni
 
 * **Language:** Kotlin
 * **UI Framework:** Jetpack Compose & Material 3
+* **Fitness Integration:** Android Health Connect API (`androidx.health.connect:connect-client`)
 * **Concurrency:** Kotlin Coroutines, `StateFlow`, `SharedFlow`, `Mutex`
 * **Architecture:** Foreground Service (`VescService`), BLE Manager (`VescBleManager`), RemoteViews AppWidgets
 * **Minimum SDK:** Android 8.0 (API 26+)

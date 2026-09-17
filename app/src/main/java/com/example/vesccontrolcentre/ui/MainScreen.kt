@@ -81,6 +81,8 @@ import com.example.vesccontrolcentre.model.TelemetryData
 import com.example.vesccontrolcentre.service.VescService
 import com.example.vesccontrolcentre.sound.EngineSoundManager
 import com.example.vesccontrolcentre.widget.BaseTelemetryWidget
+import com.example.vesccontrolcentre.health.HealthConnectManager
+import androidx.health.connect.client.PermissionController
 import java.io.File
 import java.util.Locale
 
@@ -117,6 +119,22 @@ fun MainScreen(
     val tabTitles = listOf("Telemetry", "Profiles", "Engine Sounds", "Ride Logs", "Settings")
 
     var selectedLogItem by remember { mutableStateOf<LogFileItem?>(null) }
+
+    var syncHealthConnectEnabled by remember { mutableStateOf(prefs.getBoolean("sync_health_connect", false)) }
+    val healthConnectManager = remember { HealthConnectManager(context) }
+
+    val requestPermissionActivityContract = PermissionController.createRequestPermissionResultContract()
+    val requestPermissions = rememberLauncherForActivityResult(requestPermissionActivityContract) { granted ->
+        if (granted.containsAll(HealthConnectManager.PERMISSIONS)) {
+            syncHealthConnectEnabled = true
+            prefs.edit { putBoolean("sync_health_connect", true) }
+            Toast.makeText(context, "Health Connect permissions granted!", Toast.LENGTH_SHORT).show()
+        } else {
+            syncHealthConnectEnabled = false
+            prefs.edit { putBoolean("sync_health_connect", false) }
+            Toast.makeText(context, "Health Connect permissions denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     if (selectedLogItem != null) {
         LogViewerScreen(
@@ -318,7 +336,20 @@ fun MainScreen(
                         saveHardwareConfig()
                         Toast.makeText(context, "Selected VESC: ${device.name} (${device.address})", Toast.LENGTH_SHORT).show()
                     },
-                    telemetryData = telemetryData
+                    telemetryData = telemetryData,
+                    syncHealthConnectEnabled = syncHealthConnectEnabled,
+                    onHealthConnectToggle = { checked ->
+                        if (checked) {
+                            if (healthConnectManager.healthConnectClient != null) {
+                                requestPermissions.launch(HealthConnectManager.PERMISSIONS)
+                            } else {
+                                Toast.makeText(context, "Health Connect is not available on this device.", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            syncHealthConnectEnabled = false
+                            prefs.edit { putBoolean("sync_health_connect", false) }
+                        }
+                    }
                 )
             }
         }
@@ -1169,7 +1200,9 @@ fun SettingsAndScanTab(
     discoveredDevices: List<BleDeviceItem>,
     onStartScan: () -> Unit,
     onSelectDevice: (BleDeviceItem) -> Unit,
-    telemetryData: TelemetryData
+    telemetryData: TelemetryData,
+    syncHealthConnectEnabled: Boolean,
+    onHealthConnectToggle: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
@@ -1432,6 +1465,26 @@ fun SettingsAndScanTab(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Log Raw Telemetry (CSV)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onHealthConnectToggle(!syncHealthConnectEnabled)
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(
+                            checked = syncHealthConnectEnabled,
+                            onCheckedChange = { checked ->
+                                onHealthConnectToggle(checked)
+                            },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Sync Rides to Health Connect", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     }
                 }
             }
