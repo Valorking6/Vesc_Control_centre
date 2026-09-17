@@ -24,4 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Vesc Control centre"
 include(":app")
- 
+include(":wear")

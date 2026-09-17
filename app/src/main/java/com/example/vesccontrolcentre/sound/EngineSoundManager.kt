@@ -20,6 +20,7 @@ class EngineSoundManager {
     private var isLoaded: Boolean = false
     private var isPlayingSound: Boolean = false
     private var currentRate: Float = 0.5f
+    private var currentVolume: Float = 0.0f
     private var maxErpm: Float = DEFAULT_MAX_ERPM
 
     init {
@@ -45,17 +46,18 @@ class EngineSoundManager {
 
         isLoaded = false
         isPlayingSound = false
+        currentVolume = 0.0f
 
         soundPool?.setOnLoadCompleteListener { sp, loadedSoundId, status ->
             if (status == 0 && loadedSoundId == soundId) {
                 isLoaded = true
                 Log.d(TAG, "Sound loaded successfully. Starting infinite loop...")
-                streamId = sp.play(soundId, 1.0f, 1.0f, 1, -1, currentRate)
+                streamId = sp.play(soundId, currentVolume, currentVolume, 1, -1, currentRate)
                 if (streamId != 0) {
                     isPlayingSound = true
                     Log.d(TAG, "Stream started with ID: $streamId")
                 } else {
-                    Log.w(TAG, "Stream ID returned 0 on load complete. Will retry on updatePitch.")
+                    Log.w(TAG, "Stream ID returned 0 on load complete. Will retry on updatePitchAndVolume.")
                 }
             } else {
                 Log.e(TAG, "Failed to load sound resource: $status")
@@ -67,24 +69,44 @@ class EngineSoundManager {
         }
     }
 
-    fun updatePitch(erpm: Float) {
+    fun updatePitchAndVolume(erpm: Float, speedMph: Float, instantVolume: Boolean = false) {
         val absErpm = abs(erpm)
         val targetRate = (0.5f + (absErpm / maxErpm) * 1.5f).coerceIn(0.5f, 2.0f)
         currentRate = targetRate
 
+        if (instantVolume) {
+            currentVolume = ((speedMph - 2.0f) / 10.0f).coerceIn(0.0f, 1.0f)
+        } else if (speedMph < 0.5f || absErpm == 0f) {
+            currentVolume = 0.0f
+        } else {
+            val targetVolume = ((speedMph - 2.0f) / 10.0f).coerceIn(0.0f, 1.0f)
+            if (targetVolume > currentVolume) {
+                currentVolume += (targetVolume - currentVolume) * 0.15f
+            } else {
+                currentVolume += (targetVolume - currentVolume) * 0.50f
+            }
+        }
+
         val sp = soundPool ?: return
 
         if (isLoaded && streamId == 0 && soundId != 0) {
-            streamId = sp.play(soundId, 1.0f, 1.0f, 1, -1, targetRate)
+            streamId = sp.play(soundId, currentVolume, currentVolume, 1, -1, targetRate)
             if (streamId != 0) {
                 isPlayingSound = true
-                Log.d(TAG, "Stream playback initiated in updatePitch with ID: $streamId")
+                Log.d(TAG, "Stream playback initiated in updatePitchAndVolume with ID: $streamId")
             }
         }
 
         if (streamId != 0) {
             sp.setRate(streamId, targetRate)
+            sp.setVolume(streamId, currentVolume, currentVolume)
         }
+    }
+
+    fun updatePitch(erpm: Float) {
+        // Keep for backwards compatibility (e.g. preview slider where speed is not simulated)
+        // Assume cruising speed (e.g., 20 MPH) for full volume and apply instantly
+        updatePitchAndVolume(erpm, 20f, instantVolume = true)
     }
 
     fun stopEngineSound() {

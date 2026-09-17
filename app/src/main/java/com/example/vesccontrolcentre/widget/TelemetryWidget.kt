@@ -38,6 +38,10 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
         const val EXTRA_FAULT_CODE = "extra_fault_code"
         const val EXTRA_FAULT_TEXT = "extra_fault_text"
         const val EXTRA_IS_CONNECTED = "extra_is_connected"
+        const val EXTRA_ACTIVE_RIDE_DURATION_MS = "extra_active_ride_duration_ms"
+        const val EXTRA_ESTIMATED_REMAINING_MILES = "extra_estimated_remaining_miles"
+        const val EXTRA_AI_MESSAGE = "extra_ai_message"
+        const val EXTRA_IS_VOICE_LISTENING = "extra_is_voice_listening"
 
         fun sendTelemetryBroadcast(context: Context, data: TelemetryData) {
             val classes = listOf(
@@ -63,6 +67,10 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                     putExtra(EXTRA_FAULT_CODE, data.faultCode)
                     putExtra(EXTRA_FAULT_TEXT, data.faultText)
                     putExtra(EXTRA_IS_CONNECTED, data.isConnected)
+                    putExtra(EXTRA_ACTIVE_RIDE_DURATION_MS, data.activeRideDurationMs)
+                    putExtra(EXTRA_ESTIMATED_REMAINING_MILES, data.estimatedRemainingMiles)
+                    putExtra(EXTRA_AI_MESSAGE, data.aiMessage)
+                    putExtra(EXTRA_IS_VOICE_LISTENING, data.isVoiceListening)
                 }
                 context.sendBroadcast(intent)
             }
@@ -96,6 +104,10 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                 ampHoursCharged = intent.getFloatExtra(EXTRA_AMP_HOURS_CHARGED, 0f),
                 faultCode = intent.getIntExtra(EXTRA_FAULT_CODE, 0),
                 faultText = intent.getStringExtra(EXTRA_FAULT_TEXT) ?: "NO FAULT",
+                activeRideDurationMs = intent.getLongExtra(EXTRA_ACTIVE_RIDE_DURATION_MS, 0L),
+                estimatedRemainingMiles = intent.getFloatExtra(EXTRA_ESTIMATED_REMAINING_MILES, 0f),
+                aiMessage = intent.getStringExtra(EXTRA_AI_MESSAGE) ?: "",
+                isVoiceListening = intent.getBooleanExtra(EXTRA_IS_VOICE_LISTENING, false),
                 isConnected = intent.getBooleanExtra(EXTRA_IS_CONNECTED, false)
             )
 
@@ -105,6 +117,17 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
 
             for (appWidgetId in appWidgetIds) {
                 updateWidgetViews(context, appWidgetManager, appWidgetId, data, layoutResId)
+            }
+        } else if (intent.action == "com.example.vesccontrolcentre.WAKE_WORD_TRIGGERED") {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val componentName = ComponentName(context, this::class.java)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+
+            for (appWidgetId in appWidgetIds) {
+                val views = RemoteViews(context.packageName, layoutResId)
+                views.setTextViewText(R.id.widget_status, "🎙️ LISTENING...")
+                views.setTextColor(R.id.widget_status, Color.parseColor("#00E676"))
+                appWidgetManager.updateAppWidget(appWidgetId, views)
             }
         }
     }
@@ -141,8 +164,13 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
         val showFaultCodes = prefs.getBoolean("metric_show_fault_codes", true)
 
         if (data.isConnected) {
-            views.setTextViewText(R.id.widget_status, "CONNECTED")
-            views.setTextColor(R.id.widget_status, Color.parseColor("#00E676"))
+            if (data.isVoiceListening) {
+                views.setTextViewText(R.id.widget_status, "🎙️ HEY FRIDAY")
+                views.setTextColor(R.id.widget_status, Color.parseColor("#00E5FF"))
+            } else {
+                views.setTextViewText(R.id.widget_status, "CONNECTED")
+                views.setTextColor(R.id.widget_status, Color.parseColor("#00E676"))
+            }
         } else {
             views.setTextViewText(R.id.widget_status, "OFFLINE")
             views.setTextColor(R.id.widget_status, Color.parseColor("#FF5252"))
@@ -150,8 +178,9 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
 
         when (layoutId) {
             R.layout.widget_telemetry_2x1 -> {
+                val rangeStr = if (data.estimatedRemainingMiles > 0f) String.format(Locale.US, "Est: %.1f mi", data.estimatedRemainingMiles) else "Est: -- mi"
                 val t1 = if (showMph) "$speed3DigitStr $speedUnitLabel" else String.format(Locale.US, "%.1f V", data.voltage)
-                val t2 = if (showMph && showVoltage) String.format(Locale.US, "%.1f V", data.voltage) else if (showMotorCurrent) String.format(Locale.US, "%.1f A", data.motorCurrent) else String.format(Locale.US, "%.0f°C", data.tempMosfet)
+                val t2 = if (showMph && showVoltage) String.format(Locale.US, "%.1fV • %s", data.voltage, rangeStr) else rangeStr
                 views.setTextViewText(R.id.widget_metric_1, t1)
                 views.setTextViewText(R.id.widget_metric_2, t2)
             }
@@ -179,6 +208,13 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                 }
 
                 if (layoutId == R.layout.widget_telemetry_2x2) {
+                    val sec = (data.activeRideDurationMs / 1000) % 60
+                    val min = (data.activeRideDurationMs / (1000 * 60)) % 60
+                    val hrs = (data.activeRideDurationMs / (1000 * 60 * 60))
+                    val activeTimeStr = if (hrs > 0) String.format(Locale.US, "%d:%02d:%02d", hrs, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
+
+                    val rangeStr = if (data.estimatedRemainingMiles > 0f) String.format(Locale.US, "Range: %.1f mi", data.estimatedRemainingMiles) else "Range: -- mi"
+
                     views.setTextViewText(
                         R.id.widget_detail_1,
                         if (showMotorCurrent) String.format(Locale.US, "Motor: %.1fA", data.motorCurrent) else ""
@@ -189,29 +225,39 @@ open class BaseTelemetryWidget(private val layoutResId: Int) : AppWidgetProvider
                     )
                     views.setTextViewText(
                         R.id.widget_detail_3,
-                        if (showTempMosfet) String.format(Locale.US, "FET: %.1f°C", data.tempMosfet) else ""
+                        rangeStr
                     )
                     views.setTextViewText(
                         R.id.widget_detail_4,
-                        if (showDutyCycle) String.format(Locale.US, "Duty: %.1f%%", data.dutyCycle) else ""
+                        "Time: $activeTimeStr"
                     )
 
                     if (showFaultCodes && data.faultCode > 0) {
                         views.setViewVisibility(R.id.widget_fault_banner, View.VISIBLE)
                         views.setTextViewText(R.id.widget_fault_banner, "⚠️ FAULT: ${data.faultText}")
+                    } else if (data.aiMessage.isNotBlank()) {
+                        views.setViewVisibility(R.id.widget_fault_banner, View.VISIBLE)
+                        views.setTextViewText(R.id.widget_fault_banner, "🤖 AI: ${data.aiMessage}")
                     } else {
                         views.setViewVisibility(R.id.widget_fault_banner, View.GONE)
                     }
                 } else {
+                    val sec = (data.activeRideDurationMs / 1000) % 60
+                    val min = (data.activeRideDurationMs / (1000 * 60)) % 60
+                    val hrs = (data.activeRideDurationMs / (1000 * 60 * 60))
+                    val activeTimeStr = if (hrs > 0) String.format(Locale.US, "%d:%02d:%02d", hrs, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
+
+                    val rangeStr = if (data.estimatedRemainingMiles > 0f) String.format(Locale.US, "Range: %.1f mi", data.estimatedRemainingMiles) else "Range: -- mi"
+
                     views.setTextViewText(R.id.widget_m1, if (showMotorCurrent) String.format(Locale.US, "Motor: %.1fA", data.motorCurrent) else "")
                     views.setTextViewText(R.id.widget_m2, if (showBatteryCurrent) String.format(Locale.US, "Battery: %.1fA", data.batteryCurrent) else "")
                     views.setTextViewText(R.id.widget_m3, if (showDutyCycle) String.format(Locale.US, "Duty: %.1f%%", data.dutyCycle) else "")
                     views.setTextViewText(R.id.widget_m4, if (showTempMosfet) String.format(Locale.US, "MOSFET: %.1f°C", data.tempMosfet) else "")
                     views.setTextViewText(R.id.widget_m5, if (showTempMotor) String.format(Locale.US, "Motor: %.1f°C", data.tempMotor) else "")
                     views.setTextViewText(R.id.widget_m6, if (showErpm) String.format(Locale.US, "ERPM: %.0f", data.erpm) else "")
-                    views.setTextViewText(R.id.widget_m7, if (showWattHours) String.format(Locale.US, "Energy: %.1fWh", data.wattHoursUsed) else "")
-                    views.setTextViewText(R.id.widget_m8, if (showAmpHoursCharged) String.format(Locale.US, "Regen: %.2fAh", data.ampHoursCharged) else "")
-                    views.setTextViewText(R.id.widget_fault_text, if (showFaultCodes) "Fault: ${data.faultText}" else "")
+                    views.setTextViewText(R.id.widget_m7, rangeStr)
+                    views.setTextViewText(R.id.widget_m8, "Time: $activeTimeStr")
+                    views.setTextViewText(R.id.widget_fault_text, if (showFaultCodes && data.faultCode > 0) "Fault: ${data.faultText}" else if (data.aiMessage.isNotBlank()) "🤖 AI: ${data.aiMessage}" else "")
                 }
             }
         }

@@ -10,6 +10,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import com.example.vesccontrolcentre.ai.GeminiAnalyst
+import com.example.vesccontrolcentre.ai.OnnxWakeWordEngine
+import com.example.vesccontrolcentre.ai.VescVoiceAnnouncer
+import com.example.vesccontrolcentre.telemetry.VescTelemetry
+import kotlinx.coroutines.flow.catch
+import java.io.File
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -17,10 +23,20 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -46,7 +62,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.Locale
+import com.example.vesccontrolcentre.health.HealthConnectManager
+import com.example.vesccontrolcentre.model.getFaultString
+import com.google.android.gms.wearable.Wearable
+import kotlin.math.min
 
 class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPreferenceChangeListener {
 
@@ -59,6 +78,19 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         const val ACTION_START_TELEMETRY = "com.example.vesccontrolcentre.ACTION_START_TELEMETRY"
         const val ACTION_STOP_TELEMETRY = "com.example.vesccontrolcentre.ACTION_STOP_TELEMETRY"
         const val ACTION_APPLY_PROFILE = "com.example.vesccontrolcentre.ACTION_APPLY_PROFILE"
+        const val ACTION_TRIGGER_SYNC_MARKER = "com.example.vesccontrolcentre.ACTION_TRIGGER_SYNC_MARKER"
+        const val ACTION_DROP_SYNC_MARKER = "com.example.vesccontrolcentre.ACTION_DROP_SYNC_MARKER"
+        const val ACTION_WAKE_WORD_TRIGGERED = "com.example.vesccontrolcentre.WAKE_WORD_TRIGGERED"
+        const val EXTRA_WAKE_WORD_NAME = "WAKE_WORD_NAME"
+
+        fun triggerSyncMarker(context: Context) {
+            val intent = Intent(context, VescService::class.java).apply {
+                action = ACTION_TRIGGER_SYNC_MARKER
+            }
+            if (isServiceRunning) {
+                context.startService(intent)
+            }
+        }
 
         const val EXTRA_DEVICE_ADDRESS = "extra_device_address"
         const val EXTRA_POLE_PAIRS = "extra_pole_pairs"
@@ -136,7 +168,27 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     private var gyroY = 0f
     private var gyroZ = 0f
 
+    private var tts: TextToSpeech? = null
+
+    private val geminiAnalyst by lazy { 
+        GeminiAnalyst(
+            context = this,
+            onCommandReceived = { jsonCommand ->
+                Log.d(TAG, "Executing hardware action: $jsonCommand")
+                processJsonIntent(jsonCommand)
+            },
+            onSpeechResponse = { responseText ->
+                Log.d(TAG, "Friday speech response: $responseText")
+                speak(responseText)
+            }
+        ) 
+    }
+    private var currentRiderBpm: Int = 0
+    private var onnxEngine: OnnxWakeWordEngine? = null
+
     private var wasConnected = false
+    
+    private val targetMac = "C8:DC:63:2A:F6:6E"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -144,9 +196,318 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         super.onCreate()
         createNotificationChannel()
 
+        isServiceRunning = true
+
+        tts = TextToSpeech(applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.setLanguage(Locale.US)
+                Log.d(TAG, "Built-in TextToSpeech initialized successfully.")
+            }
+        }
+
         val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
         _activeProfileState.value = prefs.getString("active_profile", null)
         prefs.registerOnSharedPreferenceChangeListener(this)
+        
+        val manager = VescBleManager(this)
+        vescBleManager = manager
+        setupBleObservers(manager)
+
+        try {
+            Wearable.getMessageClient(this).addListener { messageEvent ->
+                when (messageEvent.path) {
+                    "/vesc/sync_marker" -> {
+                        Log.d(TAG, "Sync marker received from Wear OS watch!")
+                        handleDropSyncMarker()
+                    }
+                    "/vesc/heart_rate" -> {
+                        val bpm = try {
+                            messageEvent.data.firstOrNull()?.toInt()?.and(0xFF) ?: 0
+                        } catch (_: Exception) { 0 }
+                        if (bpm > 0) {
+                            currentRiderBpm = bpm
+                            Log.d(TAG, "Live Rider Heart Rate: $bpm BPM")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error attaching Wearable MessageClient listener: ${e.message}")
+        }
+
+        try {
+            onnxEngine = OnnxWakeWordEngine(this) {
+                Log.d(TAG, "ONNX Wake Word Triggered!")
+
+                val intent = Intent(ACTION_WAKE_WORD_TRIGGERED).apply {
+                    putExtra(EXTRA_WAKE_WORD_NAME, "hey_friday")
+                }
+                sendBroadcast(intent)
+
+                onWakeWordTriggered()
+            }
+            updateMicListeningState()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting wake word engine: ${e.message}", e)
+        }
+    }
+
+    fun speak(text: String) {
+        if (text.isBlank()) return
+        try {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "vesc_tts_${System.currentTimeMillis()}")
+            Log.d(TAG, "TTS Spoke: $text")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in TTS speak: ${e.message}")
+        }
+    }
+
+    private fun updateMicListeningState() {
+        if (!isServiceRunning) {
+            try {
+                onnxEngine?.stopListening()
+            } catch (_: Exception) {}
+            return
+        }
+
+        try {
+            onnxEngine?.startListening()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting ONNX wake word engine: ${e.message}")
+        }
+    }
+
+    // 2. Handle the Wake Word Trigger
+    @SuppressLint("MissingPermission")
+    fun onWakeWordTriggered(transcript: String = "") {
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            Handler(Looper.getMainLooper()).postDelayed({
+                toneGen.release()
+            }, 200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing beep tone: ${e.message}")
+        }
+
+        serviceScope.launch(Dispatchers.IO) {
+            delay(150) // Wait for the beep to finish
+            
+            val sampleRate = 16000
+            val channelConfig = AudioFormat.CHANNEL_IN_MONO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+            
+            if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+                Log.e(TAG, "AudioRecord configuration not supported.")
+                return@launch
+            }
+
+            val audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufferSize
+            )
+
+            if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord initialization failed.")
+                return@launch
+            }
+
+            try {
+                audioRecord.startRecording()
+                Log.d(TAG, "Started recording 3s raw audio for Gemini...")
+                
+                val expectedBytes = sampleRate * 2 * 3 // 3 seconds
+                val pcmData = ByteArray(expectedBytes)
+                var bytesRead = 0
+                
+                while (bytesRead < expectedBytes) {
+                    val chunk = ByteArray(min(bufferSize, expectedBytes - bytesRead))
+                    val read = audioRecord.read(chunk, 0, chunk.size)
+                    if (read > 0) {
+                        System.arraycopy(chunk, 0, pcmData, bytesRead, read)
+                        bytesRead += read
+                    } else {
+                        break
+                    }
+                }
+                
+                Log.d(TAG, "Finished recording. Captured $bytesRead bytes. Processing with Gemini...")
+                geminiAnalyst.processVoiceCommand(pcmData)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error recording or processing voice command: ${e.message}", e)
+            } finally {
+                try {
+                    audioRecord.stop()
+                    audioRecord.release()
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun processJsonIntent(jsonIntent: String) {
+        Log.d(TAG, "Executing JSON intent from Gemini: $jsonIntent")
+        val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
+        val upper = jsonIntent.uppercase()
+
+        serviceScope.launch {
+            when {
+                upper.contains("SWITCH_PROFILE") || upper.contains("PROFILE") || upper.contains("TARGET") -> {
+                    when {
+                        upper.contains("CRAWL") || upper.contains("ECO") || upper.contains("SLOW") || upper.contains("LOW") -> handleApplyProfile(ProfileType.CRAWL)
+                        upper.contains("LONG_RANGE") || upper.contains("RANGE") || upper.contains("EFFICIEN") -> handleApplyProfile(ProfileType.LONG_RANGE)
+                        upper.contains("MAX_POWER") || upper.contains("MAX") || upper.contains("POWER") || upper.contains("SPORT") || upper.contains("FAST") || upper.contains("BOOST") || upper.contains("HIGH") -> handleApplyProfile(ProfileType.MAX_POWER)
+                        upper.contains("NORMAL") || upper.contains("BALANCED") || upper.contains("MEDIUM") || upper.contains("DEFAULT") -> handleApplyProfile(ProfileType.NORMAL)
+                    }
+                }
+
+                upper.contains("RUN_DIAGNOSTICS") || upper.contains("DIAGNOSTIC") -> {
+                    runTelemetryDiagnostic()
+                }
+
+                jsonIntent.contains("ENGINE_SOUND_OFF") -> {
+                    prefs.edit { putBoolean("engine_sound_enabled", false) }
+                    SoundToggleWidgetProvider.updateAllWidgets(this@VescService)
+                }
+
+                jsonIntent.contains("ENGINE_SOUND_ON") -> {
+                    prefs.edit { putBoolean("engine_sound_enabled", true) }
+                    SoundToggleWidgetProvider.updateAllWidgets(this@VescService)
+                }
+
+                jsonIntent.contains("CHANGE_SOUND") -> {
+                    when {
+                        jsonIntent.contains("V8_WARMUP") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_557214_lhermanns_enginewarmup_1_loop)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("V8") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("HOVER") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_348857_mickboere_hover_vehicle_idle_loop)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("SCIFI") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_407540_sojan_sci_fi_engine_loop)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("SYNTH") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_482664_joao_janz_synth_car_engine_loop_1_1)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("ALIEN") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_558975_fivebrosstopmosyt_alien_engine_loop_1)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("FAN") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_618185_theplax_extractor_fan)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("DIESEL") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_679693_grauxonen_t4_19td_2000_engine_loop)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("SPACEPOD") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_773036_sealionstudios_spacepodthursters)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun runTelemetryDiagnostic() {
+        val data = _telemetryState.value
+        val faultStr = if (data.faultCode > 0) getFaultString(data.faultCode) else "None"
+        Log.d(TAG, "Telemetry Diagnostic: Amps: ${data.motorCurrent}, Duty: ${data.dutyCycle}, Fault: $faultStr")
+        _telemetryState.value = _telemetryState.value.copy(aiMessage = "Diagnostics running...")
+    }
+
+    fun handleDropSyncMarker() {
+        Log.d(TAG, "Sync marker dropped!")
+        
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+            
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                } catch (_: Exception) {}
+            }, 200)
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                } catch (_: Exception) {}
+            }, 400)
+
+            // Release ToneGenerator and speak voice confirmation AFTER all 3 beeps finish
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+                speak("Sync marker dropped")
+            }, 600)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing sync marker beep sequence: ${e.message}")
+            speak("Sync marker dropped")
+        }
+
+        val currentData = _telemetryState.value
+        csvLogger?.logData(
+            mph = currentData.mph,
+            voltage = currentData.voltage,
+            motorAmps = currentData.motorCurrent,
+            batteryAmps = currentData.batteryCurrent,
+            dutyCycle = currentData.dutyCycle,
+            tempMosfet = currentData.tempMosfet,
+            tempMotor = currentData.tempMotor,
+            wattHoursUsed = currentData.wattHoursUsed,
+            ampHoursCharged = currentData.ampHoursCharged,
+            tachAbs = currentData.tachometerAbs,
+            faultCode = currentData.faultCode,
+            accelX = accelX,
+            accelY = accelY,
+            accelZ = accelZ,
+            gyroX = gyroX,
+            gyroY = gyroY,
+            gyroZ = gyroZ,
+            adcThrottle = currentData.adcThrottle,
+            adcBrake = currentData.adcBrake,
+            activeRideDurationMs = currentData.activeRideDurationMs,
+            isSyncMarker = true,
+            riderBpm = currentRiderBpm,
+            timestampMs = System.currentTimeMillis()
+        )
+
+        gpxLogger?.addWaypoint("Sync Drop")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -157,6 +518,11 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             ACTION_STOP_TELEMETRY -> {
                 finalizeRideLogsAndStop()
                 return START_NOT_STICKY
+            }
+
+            ACTION_DROP_SYNC_MARKER, ACTION_TRIGGER_SYNC_MARKER -> {
+                handleDropSyncMarker()
+                return START_STICKY
             }
 
             ACTION_APPLY_PROFILE -> {
@@ -189,9 +555,92 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         }
     }
 
+    private fun setupBleObservers(manager: VescBleManager) {
+        if (observeJob != null) return
+        
+        var hasAnnouncedStartup = false
+
+        observeJob = serviceScope.launch {
+            manager.telemetryData.collect { data ->
+                _telemetryState.value = data
+
+                if (data.isConnected) {
+                    wasConnected = true
+                    updateNotification(data)
+                    
+                    if (!hasAnnouncedStartup && data.faultCode == 0) {
+                        hasAnnouncedStartup = true
+                        speak("VESC control centre online. All systems stable.")
+                    }
+
+                    // Engine Sound Simulator Processing
+                    val livePrefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
+                    val soundEnabled = livePrefs.getBoolean("engine_sound_enabled", false)
+                    val soundResId = livePrefs.getInt("engine_sound_res_id", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling)
+
+                    if (soundEnabled) {
+                        if (engineSoundManager == null || currentEngineSoundResId != soundResId) {
+                            currentEngineSoundResId = soundResId
+                            if (engineSoundManager == null) {
+                                engineSoundManager = EngineSoundManager()
+                            }
+                            engineSoundManager?.startEngineSound(this@VescService, soundResId)
+                        }
+                        engineSoundManager?.updatePitchAndVolume(data.erpm, data.mph)
+                    } else {
+                        if (engineSoundManager != null) {
+                            engineSoundManager?.stopEngineSound()
+                            engineSoundManager = null
+                            currentEngineSoundResId = 0
+                        }
+                    }
+
+                    // Log CSV Telemetry Data
+                    csvLogger?.logData(
+                        mph = data.mph,
+                        voltage = data.voltage,
+                        motorAmps = data.motorCurrent,
+                        batteryAmps = data.batteryCurrent,
+                        dutyCycle = data.dutyCycle,
+                        tempMosfet = data.tempMosfet,
+                        tempMotor = data.tempMotor,
+                        wattHoursUsed = data.wattHoursUsed,
+                        ampHoursCharged = data.ampHoursCharged,
+                        tachAbs = data.tachometerAbs,
+                        faultCode = data.faultCode,
+                        accelX = accelX,
+                        accelY = accelY,
+                        accelZ = accelZ,
+                        gyroX = gyroX,
+                        gyroY = gyroY,
+                        gyroZ = gyroZ,
+                        adcThrottle = data.adcThrottle,
+                        adcBrake = data.adcBrake,
+                        activeRideDurationMs = data.activeRideDurationMs,
+                        riderBpm = currentRiderBpm,
+                        timestampMs = System.currentTimeMillis()
+                    )
+
+                    BaseTelemetryWidget.sendTelemetryBroadcast(this@VescService, data)
+                } else if (wasConnected) {
+                    Log.d(TAG, "Scooter disconnected after active connection. Finalizing logs...")
+                    finalizeRideLogsAndStop()
+                }
+            }
+        }
+
+        eventsJob?.cancel()
+        eventsJob = serviceScope.launch {
+            manager.profileEvents.collect { msg ->
+                Toast.makeText(this@VescService, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun initAndConnect(deviceAddress: String, polePairs: Int, wheelDiameter: Float) {
         isServiceRunning = true
         wasConnected = false
+        updateMicListeningState()
 
         val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
         val logGpx = prefs.getBoolean("log_gpx_enabled", true)
@@ -205,8 +654,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             csvLogger = CsvLogger(this)
             startSensorUpdates()
         }
-
-        val initialNotification = buildNotification(0f, 0f, false, "Connecting to VESC...")
+        val initialNotification = buildNotification(null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -221,82 +669,11 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         if (vescBleManager == null) {
             val manager = VescBleManager(this, polePairs, wheelDiameter)
             vescBleManager = manager
-
-            observeJob?.cancel()
-            observeJob = serviceScope.launch {
-                manager.telemetryData.collect { data ->
-                    _telemetryState.value = data
-
-                    if (data.isConnected) {
-                        wasConnected = true
-                        updateNotification(data.mph, data.voltage, true, data.statusText)
-
-                        // Engine Sound Simulator Processing
-                        val livePrefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
-                        val soundEnabled = livePrefs.getBoolean("engine_sound_enabled", false)
-                        val soundResId = livePrefs.getInt("engine_sound_res_id", R.raw.snd_636066_lumamorph_eight_cylinder_engine_idling)
-
-                        if (soundEnabled) {
-                            if (engineSoundManager == null || currentEngineSoundResId != soundResId) {
-                                currentEngineSoundResId = soundResId
-                                if (engineSoundManager == null) {
-                                    engineSoundManager = EngineSoundManager()
-                                }
-                                engineSoundManager?.startEngineSound(this@VescService, soundResId)
-                            }
-                            engineSoundManager?.updatePitch(data.erpm)
-                        } else {
-                            if (engineSoundManager != null) {
-                                engineSoundManager?.stopEngineSound()
-                                engineSoundManager = null
-                                currentEngineSoundResId = 0
-                            }
-                        }
-
-                        // Log CSV Telemetry Data
-                        csvLogger?.logData(
-                            mph = data.mph,
-                            voltage = data.voltage,
-                            motorAmps = data.motorCurrent,
-                            batteryAmps = data.batteryCurrent,
-                            dutyCycle = data.dutyCycle,
-                            tempMosfet = data.tempMosfet,
-                            tempMotor = data.tempMotor,
-                            wattHoursUsed = data.wattHoursUsed,
-                            ampHoursCharged = data.ampHoursCharged,
-                            tachAbs = data.tachometerAbs,
-                            faultCode = data.faultCode,
-                            accelX = accelX,
-                            accelY = accelY,
-                            accelZ = accelZ,
-                            gyroX = gyroX,
-                            gyroY = gyroY,
-                            gyroZ = gyroZ,
-                            adcThrottle = 0f,
-                            adcBrake = 0f,
-                            timestampMs = System.currentTimeMillis()
-                        )
-
-                        BaseTelemetryWidget.sendTelemetryBroadcast(this@VescService, data)
-                    } else if (wasConnected) {
-                        Log.d(TAG, "Scooter disconnected after active connection. Finalizing logs...")
-                        finalizeRideLogsAndStop()
-                    }
-                }
-            }
-
-            eventsJob?.cancel()
-            eventsJob = serviceScope.launch {
-                manager.profileEvents.collect { msg ->
-                    Toast.makeText(this@VescService, msg, Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            manager.connect(deviceAddress)
+            setupBleObservers(manager)
         } else {
             vescBleManager?.updateConfig(polePairs, wheelDiameter)
-            vescBleManager?.connect(deviceAddress)
         }
+        vescBleManager?.connect(deviceAddress)
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
@@ -307,6 +684,8 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                 engineSoundManager = null
                 currentEngineSoundResId = 0
             }
+        } else if (key == "continuous_mic_enabled") {
+            updateMicListeningState()
         }
     }
 
@@ -320,6 +699,16 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         _activeProfileState.value = profileType.key
 
         BaseProfileWidgetProvider.updateAllWidgets(this)
+
+        val announcement = when (profileType) {
+            ProfileType.CRAWL -> "Crawl profile active"
+            ProfileType.NORMAL -> "Normal profile active"
+            ProfileType.LONG_RANGE -> "Long Range profile active"
+            ProfileType.MAX_POWER -> "Max profile active"
+        }
+        
+        Log.d(TAG, announcement)
+        speak(announcement)
 
         if (!isServiceRunning || vescBleManager == null) {
             if (deviceAddress.isBlank()) {
@@ -430,11 +819,37 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     private fun finalizeRideLogsAndStop() {
         Log.d(TAG, "Finalizing ride logs & stopping engine sound...")
 
+        onnxEngine?.release()
+        onnxEngine = null
+
         engineSoundManager?.stopEngineSound()
         engineSoundManager = null
         currentEngineSoundResId = 0
         getSharedPreferences("vesc_prefs", MODE_PRIVATE).edit { putBoolean("engine_sound_enabled", false) }
         SoundToggleWidgetProvider.updateAllWidgets(this)
+
+        val totalActiveTimeMs = _telemetryState.value.activeRideDurationMs
+
+        val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
+        val syncHealthConnect = prefs.getBoolean("sync_health_connect", false)
+
+        val gpsTrackPoints = gpxLogger?.getGpsTrackPoints() ?: emptyList()
+        val totalDistanceMeters = gpxLogger?.getTotalDistanceMeters() ?: 0f
+
+        if (syncHealthConnect && totalActiveTimeMs > 0) {
+            val healthManager = HealthConnectManager(this)
+            val startTimeMs = System.currentTimeMillis() - totalActiveTimeMs
+            val endTimeMs = System.currentTimeMillis()
+
+            serviceScope.launch(Dispatchers.IO) {
+                healthManager.writeExerciseSession(
+                    startTimeMs = startTimeMs,
+                    endTimeMs = endTimeMs,
+                    totalDistanceMeters = totalDistanceMeters,
+                    gpsTrack = gpsTrackPoints
+                )
+            }
+        }
 
         gpxLogger?.closeLog()
         gpxLogger = null
@@ -444,6 +859,8 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
         stopGpsUpdates()
         stopSensorUpdates()
+        
+        // Disconnection handled internally by OkHttp WebSockets
 
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(
@@ -463,6 +880,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         vescBleManager = null
         isServiceRunning = false
         wasConnected = false
+        updateMicListeningState()
 
         _telemetryState.value = TelemetryData(isConnected = false, statusText = "Disconnected")
         BaseTelemetryWidget.sendTelemetryBroadcast(this, TelemetryData())
@@ -475,9 +893,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     }
 
     @SuppressLint("MissingPermission")
-    private fun updateNotification(mph: Float, voltage: Float, isConnected: Boolean, statusText: String) {
+    private fun updateNotification(data: TelemetryData) {
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val notification = buildNotification(mph, voltage, isConnected, statusText)
+        val notification = buildNotification(data)
         try {
             notificationManager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
@@ -514,12 +932,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         }
     }
 
-    private fun buildNotification(
-        mph: Float,
-        voltage: Float,
-        isConnected: Boolean,
-        statusText: String
-    ): Notification {
+    private fun buildNotification(data: TelemetryData?): Notification {
         val mainIntent = Intent(this, MainActivity::class.java)
         val contentPendingIntent = PendingIntent.getActivity(
             this,
@@ -528,28 +941,26 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopIntent = Intent(this, VescService::class.java).apply {
-            action = ACTION_STOP_TELEMETRY
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         val activeProfile = _activeProfileState.value ?: "Default"
 
-        val title = if (isConnected) {
-            String.format(Locale.US, "%.1f MPH | %.1f V [%s]", mph, voltage, activeProfile)
+        val title = if (data?.isConnected == true) {
+            "VESC Control Centre [$activeProfile]"
         } else {
-            "VESC Control ($statusText)"
+            "VESC Control Centre (${data?.statusText ?: "Connecting..."})"
         }
 
-        val contentText = if (isConnected) {
-            String.format(Locale.US, "Voltage: %.1fV - Profile: %s Active", voltage, activeProfile)
+        val contentText = if (data?.isConnected == true) {
+            val seconds = (data.activeRideDurationMs / 1000) % 60
+            val minutes = (data.activeRideDurationMs / (1000 * 60)) % 60
+            val hours = (data.activeRideDurationMs / (1000 * 60 * 60))
+            val timeStr = if (hours > 0) {
+                String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format(Locale.US, "%02d:%02d", minutes, seconds)
+            }
+            String.format(Locale.US, "Speed: %.1f MPH | Battery: %.1f V | Amps: %.1f A | Time: %s", data.mph, data.voltage, data.batteryCurrent, timeStr)
         } else {
-            "Status: $statusText"
+            "Status: ${data?.statusText ?: "Connecting..."}"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -561,7 +972,6 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(contentPendingIntent)
-            .addAction(R.drawable.ic_telemetry, "Disconnect", stopPendingIntent)
             .build()
     }
 
@@ -585,6 +995,15 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         Log.d(TAG, "onDestroy called. Stopping engine sound and closing loggers...")
         getSharedPreferences("vesc_prefs", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(this)
         
+        try {
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+        } catch (_: Exception) {}
+
+        onnxEngine?.release()
+        onnxEngine = null
+
         engineSoundManager?.stopEngineSound()
         engineSoundManager = null
         currentEngineSoundResId = 0
@@ -595,7 +1014,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         csvLogger = null
         stopGpsUpdates()
         stopSensorUpdates()
-
+        
         observeJob?.cancel()
         observeJob = null
         eventsJob?.cancel()

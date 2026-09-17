@@ -4,9 +4,13 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
+import android.speech.tts.Voice
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +30,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,6 +60,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -81,8 +88,42 @@ import com.example.vesccontrolcentre.model.TelemetryData
 import com.example.vesccontrolcentre.service.VescService
 import com.example.vesccontrolcentre.sound.EngineSoundManager
 import com.example.vesccontrolcentre.widget.BaseTelemetryWidget
+import com.example.vesccontrolcentre.health.HealthConnectManager
+import androidx.health.connect.client.PermissionController
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
+
+fun formatVoiceName(voice: Voice): String {
+    val localeStr = voice.locale.displayName
+    val rawName = voice.name.lowercase(Locale.US)
+
+    val gender = when {
+        rawName.contains("female") || Regex("-f(-|$)").containsMatchIn(rawName) -> "Female"
+        rawName.contains("male") || Regex("-m(-|$)").containsMatchIn(rawName) -> "Male"
+        else -> "Voice"
+    }
+
+    val idMatch = Regex("-x-([a-z]{3})-").find(rawName)
+    val id = idMatch?.groupValues?.get(1)?.uppercase(Locale.US) ?: ""
+
+    val network = if (voice.isNetworkConnectionRequired) "(Cloud)" else "(Local)"
+
+    return buildString {
+        append(localeStr)
+        append(" - ")
+        append(gender)
+        if (id.isNotEmpty()) {
+            append(" ")
+            append(id)
+        }
+        append(" ")
+        append(network)
+    }
+}
 
 data class BleDeviceItem(
     val name: String,
@@ -117,6 +158,62 @@ fun MainScreen(
     val tabTitles = listOf("Telemetry", "Profiles", "Engine Sounds", "Ride Logs", "Settings")
 
     var selectedLogItem by remember { mutableStateOf<LogFileItem?>(null) }
+    var isScreenFlashing by remember { mutableStateOf(false) }
+    var isVoiceCommandActive by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == "com.example.vesccontrolcentre.WAKE_WORD_TRIGGERED") {
+                    isVoiceCommandActive = true
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter("com.example.vesccontrolcentre.WAKE_WORD_TRIGGERED"),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
+    }
+
+    if (isVoiceCommandActive) {
+        LaunchedEffect(Unit) {
+            delay(4000)
+            isVoiceCommandActive = false
+        }
+    }
+
+    if (isScreenFlashing) {
+        LaunchedEffect(Unit) {
+            delay(250)
+            isScreenFlashing = false
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White)
+        )
+    }
+
+    var syncHealthConnectEnabled by remember { mutableStateOf(prefs.getBoolean("sync_health_connect", false)) }
+    val healthConnectManager = remember { HealthConnectManager(context) }
+
+    val requestPermissionActivityContract = PermissionController.createRequestPermissionResultContract()
+    val requestPermissions = rememberLauncherForActivityResult(requestPermissionActivityContract) { granted ->
+        if (granted.containsAll(HealthConnectManager.PERMISSIONS)) {
+            syncHealthConnectEnabled = true
+            prefs.edit { putBoolean("sync_health_connect", true) }
+            Toast.makeText(context, "Health Connect permissions granted!", Toast.LENGTH_SHORT).show()
+        } else {
+            syncHealthConnectEnabled = false
+            prefs.edit { putBoolean("sync_health_connect", false) }
+            Toast.makeText(context, "Health Connect permissions denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     if (selectedLogItem != null) {
         LogViewerScreen(
@@ -126,7 +223,13 @@ fun MainScreen(
         return
     }
 
-    var macAddress by remember { mutableStateOf(prefs.getString("mac_address", "") ?: "") }
+    var macAddress by remember { 
+        mutableStateOf(
+            prefs.getString("mac_address", null)
+                ?: context.getSharedPreferences("VescPrefs", Context.MODE_PRIVATE).getString("LAST_VESC_MAC", "")
+                ?: ""
+        ) 
+    }
     var polePairsText by remember { mutableStateOf(prefs.getInt("pole_pairs", 7).toString()) }
     var wheelDiameterText by remember { mutableStateOf(prefs.getFloat("wheel_diameter", 10.0f).toString()) }
 
@@ -144,6 +247,8 @@ fun MainScreen(
             putInt("pole_pairs", polePairs)
             putFloat("wheel_diameter", wheelDiameter)
         }
+        val vescPrefs = context.getSharedPreferences("VescPrefs", Context.MODE_PRIVATE)
+        vescPrefs.edit().putString("LAST_VESC_MAC", macAddress).apply()
     }
 
     @SuppressLint("MissingPermission")
@@ -272,7 +377,19 @@ fun MainScreen(
                     },
                     onStopService = {
                         VescService.stopTelemetry(context)
-                    }
+                    },
+                    onTriggerSyncMarker = {
+                        isScreenFlashing = true
+                        val intent = Intent(context, VescService::class.java).apply {
+                            action = VescService.ACTION_DROP_SYNC_MARKER
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(intent)
+                        } else {
+                            context.startService(intent)
+                        }
+                    },
+                    isVoiceCommandActive = isVoiceCommandActive
                 )
 
                 1 -> ProfilesTab(
@@ -316,9 +433,24 @@ fun MainScreen(
                     onSelectDevice = { device ->
                         macAddress = device.address
                         saveHardwareConfig()
+                        val vescPrefs = context.getSharedPreferences("VescPrefs", Context.MODE_PRIVATE)
+                        vescPrefs.edit().putString("LAST_VESC_MAC", device.address).apply()
                         Toast.makeText(context, "Selected VESC: ${device.name} (${device.address})", Toast.LENGTH_SHORT).show()
                     },
-                    telemetryData = telemetryData
+                    telemetryData = telemetryData,
+                    syncHealthConnectEnabled = syncHealthConnectEnabled,
+                    onHealthConnectToggle = { checked ->
+                        if (checked) {
+                            if (healthConnectManager.healthConnectClient != null) {
+                                requestPermissions.launch(HealthConnectManager.PERMISSIONS)
+                            } else {
+                                Toast.makeText(context, "Health Connect is not available on this device.", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            syncHealthConnectEnabled = false
+                            prefs.edit { putBoolean("sync_health_connect", false) }
+                        }
+                    }
                 )
             }
         }
@@ -331,7 +463,9 @@ fun TelemetryTab(
     activeProfileKey: String?,
     isServiceRunning: Boolean,
     onStartService: () -> Unit,
-    onStopService: () -> Unit
+    onStopService: () -> Unit,
+    onTriggerSyncMarker: () -> Unit,
+    isVoiceCommandActive: Boolean
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
@@ -521,6 +655,73 @@ fun TelemetryTab(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    val activeSeconds = (telemetryData.activeRideDurationMs / 1000) % 60
+                    val activeMinutes = (telemetryData.activeRideDurationMs / (1000 * 60)) % 60
+                    val activeHours = (telemetryData.activeRideDurationMs / (1000 * 60 * 60))
+                    val activeTimeStr = if (activeHours > 0) {
+                        String.format(Locale.US, "%d:%02d:%02d", activeHours, activeMinutes, activeSeconds)
+                    } else {
+                        String.format(Locale.US, "%02d:%02d", activeMinutes, activeSeconds)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("ACTIVE RIDE TIME", fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = activeTimeStr,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (isVoiceCommandActive) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF00E5FF)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("🎙️ Friday is listening...", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color.Black)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B2433)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("🤖 AI TELEMETRY CO-PILOT", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFE040FB))
+                                Text("Gemini Nano", fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = if (telemetryData.aiMessage.isNotBlank()) telemetryData.aiMessage else "System optimal. Co-pilot monitoring real-time power and hardware health...",
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(20.dp))
 
                     Row(
@@ -543,6 +744,25 @@ fun TelemetryTab(
                         ) {
                             Text("Stop Service", color = Color(0xFFFF5252))
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            onTriggerSyncMarker()
+                        },
+                        enabled = isServiceRunning,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = "Sync Marker",
+                            tint = Color.Black
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Drop Sync Marker", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1169,7 +1389,9 @@ fun SettingsAndScanTab(
     discoveredDevices: List<BleDeviceItem>,
     onStartScan: () -> Unit,
     onSelectDevice: (BleDeviceItem) -> Unit,
-    telemetryData: TelemetryData
+    telemetryData: TelemetryData,
+    syncHealthConnectEnabled: Boolean,
+    onHealthConnectToggle: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
@@ -1433,6 +1655,43 @@ fun SettingsAndScanTab(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Log Raw Telemetry (CSV)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onHealthConnectToggle(!syncHealthConnectEnabled)
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(
+                            checked = syncHealthConnectEnabled,
+                            onCheckedChange = { checked ->
+                                onHealthConnectToggle(checked)
+                            },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Sync Rides to Health Connect", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+
+        // Voice Announcer Options
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("AI Co-Pilot Voice", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Voice configuration is now natively handled by the Gemini Live API.",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }

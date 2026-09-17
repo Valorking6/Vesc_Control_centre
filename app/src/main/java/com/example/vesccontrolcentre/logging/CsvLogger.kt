@@ -78,7 +78,7 @@ class CsvLogger(context: Context) {
             }
 
             writer = OutputStreamWriter(outputStream, Charsets.UTF_8)
-            writer?.write("Timestamp_ms,Time_ISO,Speed_MPH,Voltage_V,Motor_Amps,Battery_Amps,Duty_Cycle,Temp_FET_C,Temp_Motor_C,Wh_Used,Ah_Charged,Tach_Abs,Fault_Code,Accel_X,Accel_Y,Accel_Z,Gyro_X,Gyro_Y,Gyro_Z,ADC_Throttle,ADC_Brake\n")
+            writer?.write("utc (ms),Time_ISO,Speed_MPH,Voltage_V,Motor_Amps,Battery_Amps,Duty_Cycle,Temp_FET_C,Temp_Motor_C,Wh_Used,Ah_Charged,Tach_Abs,Fault_Code,Accel_X,Accel_Y,Accel_Z,Gyro_X,Gyro_Y,Gyro_Z,ADC_Throttle,ADC_Brake,Active_Time_Seconds,Sync_Marker,Rider_BPM\n")
             writer?.flush()
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing CSV logger: ${e.message}", e)
@@ -106,17 +106,22 @@ class CsvLogger(context: Context) {
         gyroZ: Float,
         adcThrottle: Float,
         adcBrake: Float,
+        activeRideDurationMs: Long,
+        isSyncMarker: Boolean = false,
+        riderBpm: Int = 0,
         timestampMs: Long = System.currentTimeMillis()
     ) {
         if (isClosed || writer == null) return
         try {
             val timeIso = isoFormat.format(Date(timestampMs))
+            val activeSeconds = activeRideDurationMs / 1000f
+            val syncStr = if (isSyncMarker) "TRUE" else "FALSE"
             val line = String.format(
                 Locale.US,
-                "%d,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n",
+                "%d,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%s,%d\n",
                 timestampMs, timeIso, mph, voltage, motorAmps, batteryAmps,
                 dutyCycle, tempMosfet, tempMotor, wattHoursUsed, ampHoursCharged,
-                tachAbs, faultCode, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, adcThrottle, adcBrake
+                tachAbs, faultCode, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, adcThrottle, adcBrake, activeSeconds, syncStr, riderBpm
             )
             writer?.write(line)
         } catch (e: Exception) {

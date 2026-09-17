@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "770442018617",
+    "project_id": "vesccontrolcentre-dc796974",
+    "storage_bucket": "vesccontrolcentre-dc796974.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:770442018617:android:51bd93dddabbd97ac832e8",
+        "android_client_info": {
+          "package_name": "com.example.vesccontrolcentre"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBFdQ7OsIQsV446mM4c18o3fra1HR9fHuw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

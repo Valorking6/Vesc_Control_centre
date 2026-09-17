@@ -5,4 +5,5 @@
     <string name="status_offline">OFFLINE</string>
     <string name="default_speed">0.0 MPH</string>
     <string name="default_voltage">0.0 V</string>
+    <string name="sync_marker_widget_desc">Drop a telemetry sync marker with one tap.</string>
 </resources>

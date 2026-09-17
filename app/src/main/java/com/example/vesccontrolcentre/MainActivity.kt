@@ -11,7 +11,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.example.vesccontrolcentre.service.VescService
 import com.example.vesccontrolcentre.ui.MainScreen
 import com.example.vesccontrolcentre.ui.theme.VescControlCentreTheme
 
@@ -30,6 +32,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         checkPermissions()
+
+        bootVescServiceIfPermissionsGranted()
 
         setContent {
             VescControlCentreTheme {
@@ -51,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
         requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        requiredPermissions.add(Manifest.permission.RECORD_AUDIO)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requiredPermissions.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -64,6 +69,23 @@ class MainActivity : ComponentActivity() {
         hasPermissions = requiredPermissions.all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
+
+        if (hasPermissions) {
+            bootVescServiceIfPermissionsGranted()
+        }
+    }
+
+    private fun bootVescServiceIfPermissionsGranted() {
+        if (hasPermissions && !VescService.isServiceRunning) {
+            val serviceIntent = Intent(this, VescService::class.java).apply {
+                action = "com.example.vesccontrolcentre.ACTION_START_TELEMETRY"
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        }
     }
 
     private fun requestPermissions() {
@@ -71,6 +93,7 @@ class MainActivity : ComponentActivity() {
 
         requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        requiredPermissions.add(Manifest.permission.RECORD_AUDIO)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requiredPermissions.add(Manifest.permission.BLUETOOTH_SCAN)
