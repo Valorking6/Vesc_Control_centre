@@ -12,8 +12,8 @@ This document outlines the operational rules, architectural conventions, and doc
    * Every new feature release or significant update increments the minor version by `0.1`.
    * After `1.9`, the next version is `2.0` (not `1.10`).
 
-2. **README.md Formatting Rules:**
-   * Always format **Changelog / What's New** sections in `README.md` using **markdown checkboxes** (`- [x]`) and **technical bullet points**.
+2. **CHANGELOG.md Formatting Rules:**
+   * Always format **Changelog / What's New** sections in `CHANGELOG.md` using **markdown checkboxes** (`- [x]`) and **technical bullet points**.
    * Example:
      ```markdown
      ## 🚀 What's New in v1.1
