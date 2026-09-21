@@ -3,7 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.google.gms.google.services)
+    alias(libs.plugins.google.gms.google.services) // This was already here!
     alias(libs.plugins.google.firebase.crashlytics)
 }
 
@@ -48,6 +48,15 @@ android {
 }
 
 dependencies {
+    // Firebase Bill of Materials (BoM)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.appcheck.playintegrity)
+    implementation("com.google.firebase:firebase-appcheck-debug")
+    implementation(libs.firebase.ai)
+    implementation(libs.firebase.crashlytics)
+
+    // Compose & UI
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -55,21 +64,28 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    
+    // AndroidX & Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
+    
+    // Glance & Wear OS
     implementation("androidx.glance:glance-appwidget:1.2.0")
     implementation("androidx.glance:glance-material3:1.2.0")
     implementation("com.google.android.gms:play-services-wearable:18.1.0")
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
-    implementation("com.google.firebase:firebase-vertexai:16.5.0")
+    
+    // AI & ML
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
-    implementation(libs.firebase.crashlytics)
+    // implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
+    
+    // Coroutines & Networking
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Testing
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

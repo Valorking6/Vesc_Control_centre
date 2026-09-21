@@ -2,9 +2,11 @@ package com.example.vesccontrolcentre.ai
 
 import android.content.Context
 import android.util.Log
-import com.example.vesccontrolcentre.BuildConfig
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.content
+
+import com.google.firebase.Firebase
+import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.GenerativeBackend
+import com.google.firebase.ai.type.content
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -19,13 +21,13 @@ class GeminiAnalyst(
     }
 
     private val generativeModel by lazy {
-        GenerativeModel(
-            modelName = "gemini-3.6-flash",
-            apiKey = BuildConfig.GEMINI_API_KEY,
-            systemInstruction = content {
-                text("You are Friday, a VESC scooter assistant. Acknowledge user commands conversationally in 1 short sentence, and ALWAYS output a JSON string like {\"action\": \"SWITCH_PROFILE\", \"target\": \"MAX_POWER\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"CRAWL\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"NORMAL\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"LONG_RANGE\"} if the user requests a performance profile change.")
-            }
-        )
+        Firebase.ai(backend = GenerativeBackend.googleAI())
+            .generativeModel(
+                modelName = "gemini-2.5-flash",
+                systemInstruction = content {
+                    text("You are Friday, a VESC scooter assistant. Acknowledge user commands conversationally in 1 short sentence, and ALWAYS output a JSON string like {\"action\": \"SWITCH_PROFILE\", \"target\": \"MAX_POWER\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"CRAWL\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"NORMAL\"} or {\"action\": \"SWITCH_PROFILE\", \"target\": \"LONG_RANGE\"} if the user requests a performance profile change.")
+                }
+            )
     }
 
     private fun pcmToWav(pcmData: ByteArray, sampleRate: Int = 16000): ByteArray {
@@ -56,10 +58,10 @@ class GeminiAnalyst(
         withContext(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Processing voice command with Gemini (bytes length: ${pcmBytes.size})...")
-                
+
                 val wavData = pcmToWav(pcmBytes)
                 val promptContent = content {
-                    blob("audio/wav", wavData)
+                    inlineData(wavData, "audio/wav")
                     text("Listen to this audio command and execute the corresponding scooter action.")
                 }
 
@@ -70,7 +72,7 @@ class GeminiAnalyst(
                 if (responseText.contains("{") && responseText.contains("}")) {
                     val jsonStart = responseText.indexOf("{")
                     val jsonEnd = responseText.lastIndexOf("}") + 1
-                    if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    if (jsonStart in 0 until jsonEnd) {
                         val jsonStr = responseText.substring(jsonStart, jsonEnd)
                         onCommandReceived(jsonStr)
                     }
@@ -82,6 +84,25 @@ class GeminiAnalyst(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing voice command with Gemini: ${e.message}", e)
+                val errorMessage = e.message ?: ""
+                val userFeedback = when {
+                    errorMessage.contains("402") || errorMessage.contains("prepayment", ignoreCase = true) -> {
+                        "Gemini API prepayment credits depleted. Please check your AI Studio billing."
+                    }
+                    errorMessage.contains("429") || errorMessage.contains("quota", ignoreCase = true) -> {
+                        "Gemini API quota exceeded. Please try again later."
+                    }
+                    errorMessage.contains("API_KEY") || errorMessage.contains("key", ignoreCase = true) -> {
+                        "Invalid Gemini API key configured."
+                    }
+                    errorMessage.contains("404") || errorMessage.contains("NOT_FOUND", ignoreCase = true) -> {
+                        "Gemini AI model endpoint not found. Please verify API key permissions."
+                    }
+                    else -> {
+                        "Voice command error: ${e.localizedMessage ?: "Unable to process request."}"
+                    }
+                }
+                onSpeechResponse(userFeedback)
             }
         }
     }

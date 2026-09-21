@@ -4,6 +4,61 @@ All notable changes, release updates, and technical feature additions to the VES
 
 ---
 
+## 🚀 What's New in v5.1
+
+- [x] **Firebase Vertex AI SDK Migration:** Migrated the legacy `com.google.ai.client.generativeai` implementation in [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) to `com.google.firebase.vertexai` to align with Firebase AI Logic.
+- [x] **Ktor Conflict Fix:** Removed explicitly declared conflicting Ktor 3.0.0 dependencies from [app/build.gradle.kts](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/build.gradle.kts) that were causing `java.lang.NoClassDefFoundError: Failed resolution of: Lio/ktor/client/plugins/HttpTimeout;` during Gemini audio processing.
+
+---
+
+## 🚀 What's New in v5.0
+
+- [x] **Upgraded to Gemini 2.5 Flash:** Updated the generative model name from `gemini-1.5-flash` to `gemini-2.5-flash` in [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) to utilize the latest Firebase AI model capabilities.
+
+---
+
+## 🚀 What's New in v4.9
+
+- [x] **Firebase App Check Integration:** Added `firebase-appcheck-playintegrity` to [libs.versions.toml](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/gradle/libs.versions.toml) and [app/build.gradle.kts](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/build.gradle.kts) to resolve "No AppCheckProvider installed" errors during Gemini requests. Initialized the Play Integrity App Check Provider inside [MainActivity.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/MainActivity.kt) `onCreate()`.
+
+---
+
+## 🚀 What's New in v4.8
+
+- [x] **Firebase AI Logic Migration:** Migrated [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) to the new `com.google.firebase.ai` SDK with explicit `GenerativeBackend.googleAI()` initialization for free-tier Gemini Developer API backend usage. Updated [libs.versions.toml](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/gradle/libs.versions.toml) and [app/build.gradle.kts](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/build.gradle.kts) to replace `firebase-vertexai` with `firebase-ai`.
+
+---
+
+## 🚀 What's New in v4.7
+
+- [x] **Firebase Dependencies Fix:** Resolved Gradle build failure by adding explicit version catalog entries for `firebase-bom` (`33.10.0`) and `firebase-vertexai` SDK (`16.5.0`) in [libs.versions.toml](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/gradle/libs.versions.toml) and updating [app/build.gradle.kts](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/build.gradle.kts).
+
+---
+
+## 🚀 What's New in v4.6
+
+- [x] **Direct Firebase Vertex AI Model Initialization:** Restored direct `Firebase.vertexAI.generativeModel("gemini-1.5-flash", ...)` lazy initialization in [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt).
+
+---
+
+## 🚀 What's New in v4.5
+
+- [x] **Firebase Vertex AI Integration:** Switched [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) to Firebase Vertex AI SDK (`Firebase.vertexAI.generativeModel(...)`) with `inlineData` audio payload formatting.
+
+---
+
+## 🚀 What's New in v4.4
+
+- [x] **Gemini Model Endpoint Fallback Pipeline:** Updated [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) with an automated model fallback list (`gemini-1.5-flash-latest`, `gemini-2.0-flash`, `gemini-1.5-flash-002`, `gemini-1.5-flash-001`, `gemini-1.5-flash`) to automatically bypass 404 NOT_FOUND API errors on Google Generative AI `v1beta` endpoints and cache the working model index.
+
+---
+
+## 🚀 What's New in v4.3
+
+- [x] **Gemini API Model Name & Error Handling Fix:** Replaced invalid `gemini-3.6-flash` model identifier with `gemini-1.5-flash` in [GeminiAnalyst.kt](file:///C:/Users/romeo/AndroidStudioProjects/VescControlcentre/app/src/main/java/com/example/vesccontrolcentre/ai/GeminiAnalyst.kt) to utilize the standard Google AI Studio Free Tier endpoint without requiring prepayment credits. Added comprehensive exception catching with user-friendly TTS voice feedback for billing (402), quota (429), and API key issues.
+
+---
+
 ## 🚀 What's New in v4.2
 
 - [x] **Qwen2.5-1.5B Model Filename Target:** Updated `ModelProvisioner.kt` and `VescService.kt` model filename targets to `Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm` for exact 1-to-1 match with HuggingFace/LiteRT-LM model bundles.
