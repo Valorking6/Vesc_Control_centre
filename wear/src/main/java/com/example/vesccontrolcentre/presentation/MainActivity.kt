@@ -8,10 +8,12 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +22,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +34,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,16 +43,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import com.example.vesccontrolcentre.presentation.theme.VescControlCentreTheme
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.nio.ByteBuffer
 import java.util.Locale
 
 class MainActivity : ComponentActivity(), SensorEventListener, MessageClient.OnMessageReceivedListener {
@@ -59,11 +69,18 @@ class MainActivity : ComponentActivity(), SensorEventListener, MessageClient.OnM
     private var cachedNodeId: String? = null
     private var sensorRegistered = false
 
-    // Telemetry / UI state (Compose reads these directly, no ViewModel needed for this simple screen)
+    // Telemetry / UI state
     private var speedMph by mutableFloatStateOf(0.0f)
     private var batteryPercent by mutableIntStateOf(0)
     private var activeProfile by mutableStateOf("NORMAL")
     private var currentHeartRate by mutableIntStateOf(0)
+    private var watchSyncState by mutableStateOf<WatchSyncState>(WatchSyncState.Idle)
+
+    sealed class WatchSyncState {
+        object Idle : WatchSyncState()
+        data class Countdown(val secondsLeft: Int) : WatchSyncState()
+        object Mark : WatchSyncState()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +95,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, MessageClient.OnM
                     batteryPercent = batteryPercent,
                     activeProfile = activeProfile,
                     heartRateBpm = currentHeartRate,
+                    watchSyncState = watchSyncState,
                     onPermissionGranted = { registerHeartRateSensor() }
                 )
             }
@@ -150,6 +168,57 @@ class MainActivity : ComponentActivity(), SensorEventListener, MessageClient.OnM
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing telemetry message", e)
             }
+        } else if (messageEvent.path == "/sync_clapper") {
+            try {
+                val buffer = ByteBuffer.wrap(messageEvent.data)
+                val targetTime = buffer.long
+                triggerWatchSyncClapper(targetTime)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parsing /sync_clapper message", e)
+            }
+        }
+    }
+
+    private fun triggerWatchSyncClapper(targetTime: Long) {
+        lifecycleScope.launch(Dispatchers.Main) {
+            val d1 = targetTime - System.currentTimeMillis() - 3000
+            if (d1 > 0) {
+                watchSyncState = WatchSyncState.Countdown(3)
+                delay(1000)
+            }
+            val d2 = targetTime - System.currentTimeMillis() - 2000
+            if (d2 > 0) {
+                watchSyncState = WatchSyncState.Countdown(2)
+                delay(1000)
+            }
+            val d3 = targetTime - System.currentTimeMillis() - 1000
+            if (d3 > 0) {
+                watchSyncState = WatchSyncState.Countdown(1)
+                delay(1000)
+            }
+
+            val remaining = targetTime - System.currentTimeMillis()
+            if (remaining > 0) {
+                delay(remaining)
+            }
+
+            // The Mark!
+            watchSyncState = WatchSyncState.Mark
+
+            // Force max brightness temporarily
+            val window = window
+            val layoutParams = window.attributes
+            val oldBrightness = layoutParams.screenBrightness
+            layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+            window.attributes = layoutParams
+
+            // Teardown after 2 seconds
+            delay(2000)
+
+            // Restore brightness
+            layoutParams.screenBrightness = oldBrightness
+            window.attributes = layoutParams
+            watchSyncState = WatchSyncState.Idle
         }
     }
 
@@ -203,6 +272,7 @@ fun WearDashboardScreen(
     batteryPercent: Int,
     activeProfile: String,
     heartRateBpm: Int,
+    watchSyncState: MainActivity.WatchSyncState,
     onPermissionGranted: () -> Unit
 ) {
     val context = LocalContext.current
@@ -233,39 +303,96 @@ fun WearDashboardScreen(
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(12.dp)
-        ) {
-            // 1. Current Speed (large centered text)
-            Text(
-                text = String.format(Locale.US, "%.1f MPH", speedMph),
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
+        when (watchSyncState) {
+            is MainActivity.WatchSyncState.Countdown -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${watchSyncState.secondsLeft}",
+                        fontSize = 54.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+            is MainActivity.WatchSyncState.Mark -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Barcode / Grid pattern
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val stripeWidth = 20f
+                        var x = 0f
+                        var drawBlack = true
+                        while (x < size.width) {
+                            drawRect(
+                                color = if (drawBlack) Color.Black else Color.White,
+                                topLeft = Offset(x, 0f),
+                                size = Size(stripeWidth, size.height)
+                            )
+                            x += stripeWidth
+                            drawBlack = !drawBlack
+                        }
+                    }
+                    // Map Pin Icon centered inside barcode/grid pattern
+                    Box(
+                        modifier = Modifier
+                            .background(Color.Black)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = "Sync Marker",
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                }
+            }
+            is MainActivity.WatchSyncState.Idle -> {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    // 1. Current Speed (large centered text)
+                    Text(
+                        text = String.format(Locale.US, "%.1f MPH", speedMph),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
 
-            Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
-            // 2. Battery Percentage & Active Profile tag
-            Text(
-                text = "$batteryPercent% | ${activeProfile.uppercase()}",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF00E676)
-            )
+                    // 2. Battery Percentage & Active Profile tag
+                    Text(
+                        text = "$batteryPercent% | ${activeProfile.uppercase()}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF00E676)
+                    )
 
-            Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-            // 3. Live Heart Rate at the bottom
-            val hrText = if (heartRateBpm > 0) "\u2764\uFE0F $heartRateBpm BPM" else "\u2764\uFE0F --"
-            Text(
-                text = hrText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFFFF5252)
-            )
+                    // 3. Live Heart Rate at the bottom
+                    val hrText = if (heartRateBpm > 0) "\u2764\uFE0F $heartRateBpm BPM" else "\u2764\uFE0F --"
+                    Text(
+                        text = hrText,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFFF5252)
+                    )
+                }
+            }
         }
     }
 }

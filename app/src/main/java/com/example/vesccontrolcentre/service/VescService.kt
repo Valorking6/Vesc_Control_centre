@@ -76,6 +76,7 @@ import com.example.vesccontrolcentre.settings.UserSettingsManager
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import org.json.JSONObject
+import java.nio.ByteBuffer
 import java.util.Calendar
 import kotlin.math.min
 
@@ -626,65 +627,43 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     }
 
     fun handleDropSyncMarker() {
-        Log.d(TAG, "Sync marker dropped!")
-        
-        try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+        Log.d(TAG, "Sync marker initiated. Target: T+3.5s")
+        serviceScope.launch(Dispatchers.IO) {
+            val targetTime = System.currentTimeMillis() + 3500L
+            val payload = ByteBuffer.allocate(8).putLong(targetTime).array()
             
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-                } catch (_: Exception) {}
-            }, 200)
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-                } catch (_: Exception) {}
-            }, 400)
-
-            // Release ToneGenerator and speak voice confirmation AFTER all 3 beeps finish
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    toneGen.release()
-                } catch (_: Exception) {}
+            try {
+                Wearable.getNodeClient(this@VescService).connectedNodes.addOnSuccessListener { nodes ->
+                    for (node in nodes) {
+                        Wearable.getMessageClient(this@VescService).sendMessage(node.id, "/sync_clapper", payload)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send /sync_clapper: ${e.message}")
+            }
+            
+            val remaining = targetTime - System.currentTimeMillis()
+            if (remaining > 0) {
+                delay(remaining)
+            }
+            
+            // --- EXACT SYNC POINT ---
+            // 1. Tag CSV
+            csvLogger?.triggerSyncMarker()
+            
+            // 2. Play Audible Spike
+            try {
+                val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+                toneGen.startTone(ToneGenerator.TONE_CDMA_PIP, 150)
+                launch {
+                    delay(500)
+                    try { toneGen.release() } catch (_: Exception) {}
+                    speak("Sync marker dropped")
+                }
+            } catch (e: Exception) {
                 speak("Sync marker dropped")
-            }, 600)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error playing sync marker beep sequence: ${e.message}")
-            speak("Sync marker dropped")
+            }
         }
-
-        val currentData = _telemetryState.value
-        csvLogger?.logData(
-            mph = currentData.mph,
-            voltage = currentData.voltage,
-            motorAmps = currentData.motorCurrent,
-            batteryAmps = currentData.batteryCurrent,
-            dutyCycle = currentData.dutyCycle,
-            tempMosfet = currentData.tempMosfet,
-            tempMotor = currentData.tempMotor,
-            wattHoursUsed = currentData.wattHoursUsed,
-            ampHoursCharged = currentData.ampHoursCharged,
-            tachAbs = currentData.tachometerAbs,
-            faultCode = currentData.faultCode,
-            accelX = accelX,
-            accelY = accelY,
-            accelZ = accelZ,
-            gyroX = gyroX,
-            gyroY = gyroY,
-            gyroZ = gyroZ,
-            adcThrottle = currentData.adcThrottle,
-            adcBrake = currentData.adcBrake,
-            activeRideDurationMs = currentData.activeRideDurationMs,
-            isSyncMarker = true,
-            riderBpm = currentRiderBpm,
-            timestampMs = System.currentTimeMillis()
-        )
-
-        gpxLogger?.addWaypoint("Sync Drop")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

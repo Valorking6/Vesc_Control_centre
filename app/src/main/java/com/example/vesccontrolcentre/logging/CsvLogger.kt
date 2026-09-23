@@ -25,6 +25,12 @@ class CsvLogger(context: Context) {
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
+    
+    private var syncMarkerUntilMs = 0L
+
+    fun triggerSyncMarker() {
+        syncMarkerUntilMs = System.currentTimeMillis() + 1000L
+    }
 
     init {
         try {
@@ -115,7 +121,7 @@ class CsvLogger(context: Context) {
         try {
             val timeIso = isoFormat.format(Date(timestampMs))
             val activeSeconds = activeRideDurationMs / 1000f
-            val syncStr = if (isSyncMarker) "TRUE" else "FALSE"
+            val syncStr = if (isSyncMarker || System.currentTimeMillis() < syncMarkerUntilMs) "TRUE" else "FALSE"
             val line = String.format(
                 Locale.US,
                 "%d,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%s,%d\n",
