@@ -1,6 +1,6 @@
 # ⚡ VESC Control Centre (v4.2)
 
-A modern, feature-rich Android & Wear OS application designed for real-time telemetry monitoring, 1-tap profile switching, Wear OS watch mirroring, hands-free voice commands, video telemetry sync, dual-motor CAN bus management, Health Connect integration, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
+A modern, feature-rich Android & Wear OS application designed for real-time telemetry monitoring, 1-tap profile switching, Wear OS watch mirroring, hands-free AI voice commands with "Friday", video telemetry sync, dual-motor CAN bus management, Health Connect integration, and ride logging for VESC-based electric vehicles (*E-Scooters, EUCs, E-Skateboards, Onewheels, and E-Bikes*).
 
 [![Watch the video](https://img.youtube.com/vi/58uABSbTUZc/maxresdefault.jpg)](https://www.youtube.com/watch?v=58uABSbTUZc)
 
@@ -53,12 +53,12 @@ For a complete breakdown of version history, technical feature additions, and re
 ## 🌟 Key Features
 
 ### 🎙️ 1. Hands-Free Open-Source Voice Command System ("Hey Friday")
+* **Advanced "Friday" AI Co-Pilot:** "Friday" operates as your highly intelligent, dry, British co-pilot. She delivers proactive updates, witty banter, and processes location-aware telemetry using an unsanitized personality module that adapts to your riding speed, heart rate, and surroundings.
 * **Custom ONNX Wake-Word Model (`hey_friday.onnx`):** On-device wake-word detection powered by `com.microsoft.onnxruntime:onnxruntime-android:1.18.0` loading your custom `hey_friday.onnx` model and `model_info.json` directly from app assets.
+* **Dual-Model Text-To-Speech Routing:** Utilizes ultra-low latency `eleven_flash_v2_5` (75ms response) for instant UI button interactions, whilst routing proactive ride commentary to the high-fidelity `eleven_v3` model to output intricate, expressive inflections over helmet speakers.
 * **16kHz Mel-Spectrogram Feature Extraction:** Converts rolling 1.0-second 16kHz PCM audio buffers into 3136-element ($98 \times 32$) log-Mel spectrogram feature matrices matching model input shape `[1, 98, 32]`.
-* **False Wake Prevention Filters (L1 & L3):** Strict `0.80f` confidence threshold, **L1 3-consecutive-frame** confirmation, and **L3 2000ms cooldown** filter to eliminate background audio false triggers.
-* **Widget Visual Listening Indicator:** All telemetry widgets display a cyan `🎙️ Hey Friday` badge when the co-pilot is actively listening.
 * **Gemini Nano Intent Parser:** Passes recognized speech to local Generative AI model (`GeminiAnalyst.kt`) expecting strict JSON intent structures (`SWITCH_PROFILE`, `RUN_DIAGNOSTIC`).
-* **Text-To-Speech Feedback & Voice Selector:** Customizable AI Co-Pilot voice via the UI settings tab. Uses `VescVoiceAnnouncer.speak()` to confirm actions out loud.
+* **Widget Visual Listening Indicator:** All telemetry widgets display a cyan `🎙️ Hey Friday` badge when the co-pilot is actively listening.
 
 ---
 
@@ -77,8 +77,9 @@ For a complete breakdown of version history, technical feature additions, and re
 ---
 
 ### ⌚ 4. Wear OS Live Companion App
-* **Wrist Telemetry Mirroring:** Live Wear OS Jetpack Compose app mirroring real-time Speed, Voltage, Active Ride Time, and Estimated Range directly on your smartwatch.
-* **Low-Latency Wearable Data Layer:** Uses Google Play Services Wearable `DataClient` to receive urgent updates directly from the phone foreground service (`VescService.kt`).
+* **Wrist Telemetry Mirroring:** Live Wear OS Jetpack Compose app mirroring real-time Speed, Voltage, Active Profile, and Battery Percentage directly on your smartwatch.
+* **Biometric Broadcaster (Watch $\rightarrow$ Phone):** Native integration with `Sensor.TYPE_HEART_RATE`. Once granted, Wear OS immediately streams rider heart rate (BPM) over the `/vesc/heart_rate` data layer path directly into the phone's telemetry stream for logging and AI banter.
+* **Low-Latency Wearable Data Layer:** Uses Google Play Services Wearable API to bidirectionally route asynchronous JSON payloads and byte arrays securely between devices.
 
 ---
 

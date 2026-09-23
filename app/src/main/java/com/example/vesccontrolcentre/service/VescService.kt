@@ -12,7 +12,7 @@ import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import com.example.vesccontrolcentre.ai.GeminiAnalyst
 import com.example.vesccontrolcentre.ai.OnnxWakeWordEngine
-import com.example.vesccontrolcentre.ai.VescVoiceAnnouncer
+import com.example.vesccontrolcentre.ai.ElevenLabsManager
 import com.example.vesccontrolcentre.telemetry.VescTelemetry
 import kotlinx.coroutines.flow.catch
 import java.io.File
@@ -58,13 +58,25 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlin.random.Random
+import android.location.Geocoder
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import java.text.SimpleDateFormat
+import java.util.Date
 import com.example.vesccontrolcentre.health.HealthConnectManager
 import com.example.vesccontrolcentre.model.getFaultString
+import com.example.vesccontrolcentre.settings.UserSettingsManager
+import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
+import org.json.JSONObject
+import java.util.Calendar
 import kotlin.math.min
 
 class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPreferenceChangeListener {
@@ -106,7 +118,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         var isServiceRunning = false
             private set
 
-        fun startTelemetry(context: Context, deviceAddress: String, polePairs: Int = 7, wheelDiameter: Float = 10.0f) {
+        fun startTelemetry(context: Context, deviceAddress: String, polePairs: Int = 12, wheelDiameter: Float = 10.0f) {
             val intent = Intent(context, VescService::class.java).apply {
                 action = ACTION_START_TELEMETRY
                 putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
@@ -148,6 +160,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     private val serviceScope = CoroutineScope(Dispatchers.Main)
     private var observeJob: Job? = null
     private var eventsJob: Job? = null
+    
+    private var rideStartTimeMs = 0L
+    private var proactiveAssistantJob: Job? = null
 
     private var gpxLogger: GpxLogger? = null
     private var csvLogger: CsvLogger? = null
@@ -159,6 +174,8 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     private var currentLat = 0.0
     private var currentLon = 0.0
     private var currentAlt = 0.0
+    private var currentGpsSpeed = 0f
+    private var currentGpsBearing = 0f
 
     private var sensorManager: SensorManager? = null
     private var accelX = 0f
@@ -172,7 +189,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
     private val geminiAnalyst by lazy { 
         GeminiAnalyst(
-            context = this,
+            appContext = this,
             onCommandReceived = { jsonCommand ->
                 Log.d(TAG, "Executing hardware action: $jsonCommand")
                 processJsonIntent(jsonCommand)
@@ -187,6 +204,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     private var onnxEngine: OnnxWakeWordEngine? = null
 
     private var wasConnected = false
+    private var hasPlayedStartupGreeting = false
     
     private val targetMac = "C8:DC:63:2A:F6:6E"
 
@@ -209,7 +227,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         _activeProfileState.value = prefs.getString("active_profile", null)
         prefs.registerOnSharedPreferenceChangeListener(this)
         
-        val manager = VescBleManager(this)
+        val initialPolePairs = prefs.getInt("pole_pairs", 7)
+        val initialWheelDiameter = prefs.getFloat("wheel_diameter", 10.0f)
+        val manager = VescBleManager(this, initialPolePairs, initialWheelDiameter)
         vescBleManager = manager
         setupBleObservers(manager)
 
@@ -252,13 +272,130 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         }
     }
 
-    fun speak(text: String) {
+    private val elevenLabsManager by lazy { ElevenLabsManager(this) }
+
+    fun speak(text: String, modelId: String = "eleven_flash_v2_5") {
         if (text.isBlank()) return
+        
+        val userSettings = UserSettingsManager(this)
+        val usePremium = userSettings.usePremiumVoice.value
+        val elevenLabsApiKey = userSettings.elevenLabsApiKey.value
+        val voiceId = userSettings.elevenLabsVoiceId.value
+        
+        serviceScope.launch {
+            if (usePremium && elevenLabsApiKey.isNotBlank()) {
+                try {
+                    elevenLabsManager.speakText(text, voiceId, elevenLabsApiKey, modelId)
+                    Log.d(TAG, "ElevenLabs TTS Requested: $text")
+                    return@launch
+                } catch (e: Exception) {
+                    Log.e(TAG, "ElevenLabs TTS failed, falling back to local TTS: ${e.message}")
+                }
+            }
+            // Fallback to local TTS
+            Log.d(TAG, "Local TTS Requested: $text")
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts_req_${System.currentTimeMillis()}")
+        }
+    }
+
+    private suspend fun getStreetName(lat: Double, lon: Double): String = suspendCancellableCoroutine { continuation ->
+        if (lat == 0.0 && lon == 0.0) {
+            if (continuation.isActive) continuation.resume("Unknown Location")
+            return@suspendCancellableCoroutine
+        }
         try {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "vesc_tts_${System.currentTimeMillis()}")
-            Log.d(TAG, "TTS Spoke: $text")
+            val geocoder = Geocoder(this@VescService, Locale.getDefault())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                geocoder.getFromLocation(lat, lon, 1) { addresses ->
+                    val street = addresses.firstOrNull()?.thoroughfare ?: "Unknown Road"
+                    if (continuation.isActive) continuation.resume(street)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val addresses = geocoder.getFromLocation(lat, lon, 1)
+                val street = addresses?.firstOrNull()?.thoroughfare ?: "Unknown Road"
+                if (continuation.isActive) continuation.resume(street)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in TTS speak: ${e.message}")
+            if (continuation.isActive) continuation.resume("Unknown Road")
+        }
+    }
+
+    private fun startProactiveAssistant() {
+        rideStartTimeMs = System.currentTimeMillis()
+        
+        proactiveAssistantJob = serviceScope.launch {
+            while(isActive) {
+                // Pick a random delay between 2 and 10 minutes
+                val nextDelayMinutes = Random.nextInt(2, 11) 
+                val nextDelayMs = nextDelayMinutes * 60 * 1000L
+                
+                Log.d(TAG, "Friday is resting. Next spontaneous update in $nextDelayMinutes minutes.")
+                
+                // Wait for the randomized time
+                delay(nextDelayMs)
+                
+                val data = vescBleManager?.telemetryData?.value
+                val currentSpeed = data?.mph ?: 0f
+                val currentBattery = data?.voltage ?: 0f
+                val activeProfile = (activeProfileState.value ?: "NORMAL").uppercase()
+                val currentTimeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+
+                val batteryPercent = if (currentBattery > 0f) {
+                    val seriesCells = maxOf(1, Math.round(currentBattery / 3.7f))
+                    val cellVoltage = currentBattery / seriesCells
+                    ((cellVoltage - 3.2f) / (4.2f - 3.2f) * 100f).toInt().coerceIn(0, 100)
+                } else {
+                    0
+                }
+
+                val compassDirection = when (currentGpsBearing) {
+                    in 0f..22.5f, in 337.5f..360f -> "North"
+                    in 22.5f..67.5f -> "North East"
+                    in 67.5f..112.5f -> "East"
+                    in 112.5f..157.5f -> "South East"
+                    in 157.5f..202.5f -> "South"
+                    in 202.5f..247.5f -> "South West"
+                    in 247.5f..292.5f -> "West"
+                    in 292.5f..337.5f -> "North West"
+                    else -> "Unknown"
+                }
+
+                val streetName = getStreetName(currentLat, currentLon)
+
+                val ridingStyleInference = if (currentSpeed > 20 && (data?.adcThrottle ?: 0f) > 0.8f) {
+                    "Aggressive acceleration, carving"
+                } else if (currentSpeed < 10) {
+                    "Leisurely cruising"
+                } else {
+                    "Steady riding"
+                }
+
+                val jsonPayload = JSONObject().apply {
+                    put("scooter_state", activeProfile)
+                    put("speed_mph", currentSpeed)
+                    put("battery_percent", batteryPercent)
+                    put("rider_heart_rate", currentRiderBpm)
+                    put("riding_style_inference", ridingStyleInference)
+                    put("environment", JSONObject().apply {
+                        put("time", currentTimeStr)
+                        put("weather", "Unknown") // Placeholder if no weather API exists
+                        put("location", JSONObject().apply {
+                            put("bearing", compassDirection)
+                            put("street_name", streetName)
+                        })
+                    })
+                }.toString(2)
+                
+                // Pass the data to Gemini
+                val aiMessage = geminiAnalyst.generateProactiveUpdate(
+                    jsonPayload
+                )
+                
+                if (aiMessage.isNotBlank()) {
+                    speak(aiMessage, modelId = "eleven_v3")
+                }
+            }
         }
     }
 
@@ -336,7 +473,17 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                 }
                 
                 Log.d(TAG, "Finished recording. Captured $bytesRead bytes. Processing with Gemini...")
-                geminiAnalyst.processVoiceCommand(pcmData)
+
+                val speedMph = vescBleManager?.telemetryData?.value?.mph ?: 0f
+                val voltage = vescBleManager?.telemetryData?.value?.voltage ?: 0f
+
+                geminiAnalyst.processVoiceCommand(
+                    pcmBytes = pcmData,
+                    speedMph = speedMph,
+                    batteryVoltage = voltage,
+                    lat = currentLat,
+                    lon = currentLon
+                )
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error recording or processing voice command: ${e.message}", e)
@@ -358,10 +505,10 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             when {
                 upper.contains("SWITCH_PROFILE") || upper.contains("PROFILE") || upper.contains("TARGET") -> {
                     when {
-                        upper.contains("CRAWL") || upper.contains("ECO") || upper.contains("SLOW") || upper.contains("LOW") -> handleApplyProfile(ProfileType.CRAWL)
-                        upper.contains("LONG_RANGE") || upper.contains("RANGE") || upper.contains("EFFICIEN") -> handleApplyProfile(ProfileType.LONG_RANGE)
-                        upper.contains("MAX_POWER") || upper.contains("MAX") || upper.contains("POWER") || upper.contains("SPORT") || upper.contains("FAST") || upper.contains("BOOST") || upper.contains("HIGH") -> handleApplyProfile(ProfileType.MAX_POWER)
-                        upper.contains("NORMAL") || upper.contains("BALANCED") || upper.contains("MEDIUM") || upper.contains("DEFAULT") -> handleApplyProfile(ProfileType.NORMAL)
+                        upper.contains("CRAWL") || upper.contains("ECO") || upper.contains("SLOW") || upper.contains("LOW") -> handleApplyProfile(ProfileType.CRAWL, isFromGemini = true)
+                        upper.contains("LONG_RANGE") || upper.contains("RANGE") || upper.contains("EFFICIEN") -> handleApplyProfile(ProfileType.LONG_RANGE, isFromGemini = true)
+                        upper.contains("MAX_POWER") || upper.contains("MAX") || upper.contains("POWER") || upper.contains("SPORT") || upper.contains("FAST") || upper.contains("BOOST") || upper.contains("HIGH") -> handleApplyProfile(ProfileType.MAX_POWER, isFromGemini = true)
+                        upper.contains("NORMAL") || upper.contains("BALANCED") || upper.contains("MEDIUM") || upper.contains("DEFAULT") -> handleApplyProfile(ProfileType.NORMAL, isFromGemini = true)
                     }
                 }
 
@@ -432,6 +579,36 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                         jsonIntent.contains("SPACEPOD") -> {
                             prefs.edit {
                                 putInt("engine_sound_res_id", R.raw.snd_773036_sealionstudios_spacepodthursters)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("F1_LOW") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_f1_low)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("F1") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_f1)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("DUALTRONX") || jsonIntent.contains("DUALTRON_X") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_dualtron_x)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("DUALTRON") || jsonIntent.contains("THUNDER") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_dualtron_thunder)
+                                putBoolean("engine_sound_enabled", true)
+                            }
+                        }
+                        jsonIntent.contains("HYPERX") || jsonIntent.contains("HYPER_X") -> {
+                            prefs.edit {
+                                putInt("engine_sound_res_id", R.raw.snd_hyper_x)
                                 putBoolean("engine_sound_enabled", true)
                             }
                         }
@@ -533,12 +710,23 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             }
 
             ACTION_START_TELEMETRY, null -> {
+                val savedPrefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
                 val deviceAddress = intent?.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                    ?: getSharedPreferences("vesc_prefs", MODE_PRIVATE).getString("mac_address", "") ?: ""
-                val polePairs = intent?.getIntExtra(EXTRA_POLE_PAIRS, 7)
-                    ?: getSharedPreferences("vesc_prefs", MODE_PRIVATE).getInt("pole_pairs", 7)
-                val wheelDiameter = intent?.getFloatExtra(EXTRA_WHEEL_DIAMETER, 10.0f)
-                    ?: getSharedPreferences("vesc_prefs", MODE_PRIVATE).getFloat("wheel_diameter", 10.0f)
+                    ?: savedPrefs.getString("mac_address", "") ?: ""
+                
+                // Correctly check EXTRA_POLE_PAIRS and fallback to your saved value or 12
+                val polePairs = if (intent?.hasExtra(EXTRA_POLE_PAIRS) == true) {
+                    intent.getIntExtra(EXTRA_POLE_PAIRS, savedPrefs.getInt("pole_pairs", 12))
+                } else {
+                    savedPrefs.getInt("pole_pairs", 12)
+                }
+
+                // Correctly check EXTRA_WHEEL_DIAMETER and fallback to your saved value or 10.0f
+                val wheelDiameter = if (intent?.hasExtra(EXTRA_WHEEL_DIAMETER) == true) {
+                    intent.getFloatExtra(EXTRA_WHEEL_DIAMETER, savedPrefs.getFloat("wheel_diameter", 10.0f))
+                } else {
+                    savedPrefs.getFloat("wheel_diameter", 10.0f)
+                }
 
                 if (deviceAddress.isBlank()) {
                     Log.e(TAG, "Target BLE MAC address is missing!")
@@ -548,6 +736,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                 }
 
                 initAndConnect(deviceAddress, polePairs, wheelDiameter)
+                startProactiveAssistant()
                 return START_STICKY
             }
 
@@ -557,8 +746,6 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
     private fun setupBleObservers(manager: VescBleManager) {
         if (observeJob != null) return
-        
-        var hasAnnouncedStartup = false
 
         observeJob = serviceScope.launch {
             manager.telemetryData.collect { data ->
@@ -568,9 +755,24 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                     wasConnected = true
                     updateNotification(data)
                     
-                    if (!hasAnnouncedStartup && data.faultCode == 0) {
-                        hasAnnouncedStartup = true
-                        speak("VESC control centre online. All systems stable.")
+                    if (data.voltage > 10.0f && !hasPlayedStartupGreeting && data.faultCode == 0) {
+                        hasPlayedStartupGreeting = true
+                        serviceScope.launch {
+                            val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                            val timeOfDay = when (currentHour) {
+                                in 5..11 -> "Morning"
+                                in 12..16 -> "Afternoon"
+                                in 17..19 -> "Late Evening"
+                                else -> "Night"
+                            }
+                            val greeting = geminiAnalyst.generateStartupGreeting(
+                                batteryVoltage = data.voltage,
+                                timeOfDay = timeOfDay,
+                                lat = currentLat,
+                                lon = currentLon
+                            )
+                            speak(greeting)
+                        }
                     }
 
                     // Engine Sound Simulator Processing
@@ -622,8 +824,11 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                     )
 
                     BaseTelemetryWidget.sendTelemetryBroadcast(this@VescService, data)
+                    sendTelemetryToWear(data)
                 } else if (wasConnected) {
                     Log.d(TAG, "Scooter disconnected after active connection. Finalizing logs...")
+                    hasPlayedStartupGreeting = false
+                    sendTelemetryToWear(TelemetryData(isConnected = false, statusText = "Disconnected"))
                     finalizeRideLogsAndStop()
                 }
             }
@@ -634,6 +839,46 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             manager.profileEvents.collect { msg ->
                 Toast.makeText(this@VescService, msg, Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun sendTelemetryToWear(data: TelemetryData) {
+        try {
+            val batteryPercent = if (data.voltage > 0f) {
+                val seriesCells = maxOf(1, Math.round(data.voltage / 3.7f))
+                val cellVoltage = data.voltage / seriesCells
+                ((cellVoltage - 3.2f) / (4.2f - 3.2f) * 100f).toInt().coerceIn(0, 100)
+            } else {
+                0
+            }
+            val activeProfile = (activeProfileState.value ?: "NORMAL").uppercase()
+
+            val jsonPayload = JSONObject().apply {
+                put("speed", data.mph)
+                put("battery", batteryPercent)
+                put("profile", activeProfile)
+            }.toString().toByteArray(Charsets.UTF_8)
+
+            Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
+                for (node in nodes) {
+                    Wearable.getMessageClient(this)
+                        .sendMessage(node.id, "/vesc/telemetry", jsonPayload)
+                }
+            }
+
+            val putDataMapReq = PutDataMapRequest.create("/telemetry")
+            val dataMap = putDataMapReq.dataMap
+            dataMap.putFloat("mph", data.mph)
+            dataMap.putFloat("voltage", data.voltage)
+            dataMap.putLong("activeRideDurationMs", data.activeRideDurationMs)
+            dataMap.putFloat("estimatedRemainingMiles", data.estimatedRemainingMiles)
+            dataMap.putBoolean("isConnected", data.isConnected)
+            dataMap.putLong("timestamp", System.currentTimeMillis())
+
+            val putDataReq = putDataMapReq.asPutDataRequest().setUrgent()
+            Wearable.getDataClient(this).putDataItem(putDataReq)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error broadcasting telemetry to Wear OS: ${e.message}")
         }
     }
 
@@ -648,8 +893,10 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
         if (logGpx) {
             gpxLogger = GpxLogger(this)
-            startGpsUpdates()
         }
+        // Always start GPS updates for AI location-aware telemetry context
+        startGpsUpdates()
+        
         if (logCsv) {
             csvLogger = CsvLogger(this)
             startSensorUpdates()
@@ -677,8 +924,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
+        val prefs = sharedPreferences ?: getSharedPreferences("vesc_prefs", MODE_PRIVATE)
         if (key == "engine_sound_enabled" && isServiceRunning) {
-            val enabled = sharedPreferences?.getBoolean("engine_sound_enabled", false) ?: false
+            val enabled = prefs.getBoolean("engine_sound_enabled", false)
             if (!enabled) {
                 engineSoundManager?.stopEngineSound()
                 engineSoundManager = null
@@ -686,10 +934,15 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             }
         } else if (key == "continuous_mic_enabled") {
             updateMicListeningState()
+        } else if (key == "pole_pairs" || key == "wheel_diameter") {
+            val polePairs = prefs.getInt("pole_pairs", 7)
+            val wheelDiameter = prefs.getFloat("wheel_diameter", 10.0f)
+            vescBleManager?.updateConfig(polePairs, wheelDiameter)
+            Log.d(TAG, "Dynamic config update: polePairs=$polePairs, wheelDiameter=$wheelDiameter")
         }
     }
 
-    private fun handleApplyProfile(profileType: ProfileType) {
+    private fun handleApplyProfile(profileType: ProfileType, isFromGemini: Boolean = false) {
         val prefs = getSharedPreferences("vesc_prefs", MODE_PRIVATE)
         val deviceAddress = prefs.getString("mac_address", "") ?: ""
         val polePairs = prefs.getInt("pole_pairs", 7)
@@ -700,15 +953,30 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
         BaseProfileWidgetProvider.updateAllWidgets(this)
 
-        val announcement = when (profileType) {
+        val defaultAnnouncement = when (profileType) {
             ProfileType.CRAWL -> "Crawl profile active"
             ProfileType.NORMAL -> "Normal profile active"
             ProfileType.LONG_RANGE -> "Long Range profile active"
             ProfileType.MAX_POWER -> "Max profile active"
         }
         
-        Log.d(TAG, announcement)
-        speak(announcement)
+        Log.d(TAG, defaultAnnouncement)
+        
+        // ONLY speak if it wasn't triggered by Gemini
+        if (!isFromGemini) {
+            val speedMph = vescBleManager?.telemetryData?.value?.mph ?: 0f
+            val voltage = vescBleManager?.telemetryData?.value?.voltage ?: 0f
+            
+            serviceScope.launch {
+                val aiAnnouncement = geminiAnalyst.generateProfileSwitchCommentary(
+                    targetProfile = profileType.name,
+                    speedMph = speedMph,
+                    batteryVoltage = voltage
+                )
+                Log.d(TAG, aiAnnouncement)
+                speak(aiAnnouncement)
+            }
+        }
 
         if (!isServiceRunning || vescBleManager == null) {
             if (deviceAddress.isBlank()) {
@@ -774,6 +1042,8 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
                     if (currentLat != 0.0 || currentLon != 0.0) {
                         val speed = if (location.hasSpeed()) location.speed else 0f
                         val bearing = if (location.hasBearing()) location.bearing else 0f
+                        currentGpsSpeed = speed
+                        currentGpsBearing = bearing
                         val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
                         val satellites = location.extras?.getInt("satellites", 0) ?: 0
                         
@@ -818,7 +1088,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
 
     private fun finalizeRideLogsAndStop() {
         Log.d(TAG, "Finalizing ride logs & stopping engine sound...")
+        hasPlayedStartupGreeting = false
 
+        proactiveAssistantJob?.cancel()
         onnxEngine?.release()
         onnxEngine = null
 
@@ -992,7 +1264,7 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy called. Stopping engine sound and closing loggers...")
+        Log.d(TAG, "onDestroy called. Stopping engine sound, AI tasks, and closing loggers...")
         getSharedPreferences("vesc_prefs", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(this)
         
         try {
@@ -1000,6 +1272,9 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
             tts?.shutdown()
             tts = null
         } catch (_: Exception) {}
+
+        elevenLabsManager.stop()
+        hasPlayedStartupGreeting = false
 
         onnxEngine?.release()
         onnxEngine = null
@@ -1022,6 +1297,8 @@ class VescService : Service(), SensorEventListener, SharedPreferences.OnSharedPr
         vescBleManager?.disconnect()
         vescBleManager = null
         isServiceRunning = false
+        proactiveAssistantJob?.cancel()
+        serviceScope.cancel()
         super.onDestroy()
     }
 }

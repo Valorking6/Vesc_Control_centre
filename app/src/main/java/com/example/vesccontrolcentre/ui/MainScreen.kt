@@ -46,7 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
@@ -93,6 +93,7 @@ import androidx.health.connect.client.PermissionController
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.core.content.ContextCompat
+import com.example.vesccontrolcentre.ui.settings.SystemScreen
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
@@ -155,7 +156,7 @@ fun MainScreen(
     val prefs = remember { context.getSharedPreferences("vesc_prefs", Context.MODE_PRIVATE) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf("Telemetry", "Profiles", "Engine Sounds", "Ride Logs", "Settings")
+    val tabTitles = listOf("Telemetry", "Profiles", "Engine Sounds", "Ride Logs", "Settings", "System")
 
     var selectedLogItem by remember { mutableStateOf<LogFileItem?>(null) }
     var isScreenFlashing by remember { mutableStateOf(false) }
@@ -305,7 +306,7 @@ fun MainScreen(
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_telemetry),
                                 contentDescription = "Logo",
-                                tint = Color(0xFF00E5FF)
+                                tint = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text("VESC Control Centre", fontWeight = FontWeight.Bold)
@@ -316,7 +317,11 @@ fun MainScreen(
                     )
                 )
 
-                PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
+                PrimaryScrollableTabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    edgePadding = 8.dp,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ) {
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = selectedTabIndex == index,
@@ -335,13 +340,13 @@ fun MainScreen(
         ) {
             if (!hasPermissions) {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF331414)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Permissions Required", fontWeight = FontWeight.Bold, color = Color(0xFFFF5252))
+                        Text("Permissions Required", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             "Bluetooth, Location and Notification permissions are required to scan BLE devices, log GPX coordinates, and run background telemetry.",
@@ -351,7 +356,7 @@ fun MainScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = onRequestPermissions,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         ) {
                             Text("Grant Permissions")
                         }
@@ -452,6 +457,10 @@ fun MainScreen(
                         }
                     }
                 )
+
+                5 -> SystemScreen(
+                    onBack = { selectedTabIndex = 0 }
+                )
             }
         }
     }
@@ -488,7 +497,7 @@ fun TelemetryTab(
     ) {
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF121824)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -501,7 +510,7 @@ fun TelemetryTab(
                         Box(
                             modifier = Modifier
                                 .background(
-                                    if (telemetryData.isConnected) Color(0xFF00E676) else Color(0xFFFF5252),
+                                    if (telemetryData.isConnected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
                                     shape = RoundedCornerShape(4.dp)
                                 )
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -530,7 +539,7 @@ fun TelemetryTab(
                                     prefs.edit { putString("speedometer_mode", "DIGITAL") }
                                 },
                                 label = { Text("Digital", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E5FF), selectedLabelColor = Color.Black)
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary, selectedLabelColor = Color.Black)
                             )
 
                             FilterChip(
@@ -540,7 +549,7 @@ fun TelemetryTab(
                                     prefs.edit { putString("speedometer_mode", "DIAL") }
                                 },
                                 label = { Text("Dial Gauge", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E5FF), selectedLabelColor = Color.Black)
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary, selectedLabelColor = Color.Black)
                             )
                         }
 
@@ -553,7 +562,7 @@ fun TelemetryTab(
                                     BaseTelemetryWidget.sendTelemetryBroadcast(context, telemetryData)
                                 },
                                 label = { Text("MPH", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E676), selectedLabelColor = Color.Black)
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.tertiary, selectedLabelColor = Color.Black)
                             )
 
                             FilterChip(
@@ -564,7 +573,7 @@ fun TelemetryTab(
                                     BaseTelemetryWidget.sendTelemetryBroadcast(context, telemetryData)
                                 },
                                 label = { Text("KM/H", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E676), selectedLabelColor = Color.Black)
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.tertiary, selectedLabelColor = Color.Black)
                             )
                         }
                     }
@@ -589,9 +598,9 @@ fun TelemetryTab(
                                     text = speed3DigitStr,
                                     fontSize = 38.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF00E5FF)
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                                Text(if (isKmh) "KM/H" else "MPH", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E5FF))
+                                Text(if (isKmh) "KM/H" else "MPH", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
 
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -600,9 +609,9 @@ fun TelemetryTab(
                                     text = String.format(Locale.US, "%.1f", telemetryData.voltage),
                                     fontSize = 38.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF00E676)
+                                    color = MaterialTheme.colorScheme.tertiary
                                 )
-                                Text("VOLTS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                                Text("VOLTS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                             }
 
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -650,7 +659,7 @@ fun TelemetryTab(
                                 text = String.format(Locale.US, "%.1f °C", telemetryData.tempMosfet),
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFF5252)
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
                     }
@@ -676,7 +685,7 @@ fun TelemetryTab(
                                 text = activeTimeStr,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -685,7 +694,7 @@ fun TelemetryTab(
 
                     if (isVoiceCommandActive) {
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF00E5FF)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -700,7 +709,7 @@ fun TelemetryTab(
                     }
 
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B2433)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
@@ -716,7 +725,7 @@ fun TelemetryTab(
                             Text(
                                 text = if (telemetryData.aiMessage.isNotBlank()) telemetryData.aiMessage else "System optimal. Co-pilot monitoring real-time power and hardware health...",
                                 fontSize = 12.sp,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -731,7 +740,7 @@ fun TelemetryTab(
                         Button(
                             onClick = onStartService,
                             enabled = !isServiceRunning,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("Start Service", color = Color.Black, fontWeight = FontWeight.Bold)
@@ -742,7 +751,7 @@ fun TelemetryTab(
                             enabled = isServiceRunning,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Stop Service", color = Color(0xFFFF5252))
+                            Text("Stop Service", color = MaterialTheme.colorScheme.error)
                         }
                     }
 
@@ -753,7 +762,7 @@ fun TelemetryTab(
                             onTriggerSyncMarker()
                         },
                         enabled = isServiceRunning,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676)),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
@@ -799,7 +808,7 @@ fun TelemetryTab(
                                 logGpxEnabled = checked
                                 prefs.edit { putBoolean("log_gpx_enabled", checked) }
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -826,7 +835,7 @@ fun TelemetryTab(
                                 logCsvEnabled = checked
                                 prefs.edit { putBoolean("log_csv_enabled", checked) }
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -848,7 +857,7 @@ fun TelemetryTab(
                         text = activeProfileKey ?: "None / Default",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 18.sp,
-                        color = Color(0xFF00E5FF)
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -886,7 +895,7 @@ fun ProfilesTab(
 
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isActive) Color(0xFF1E3A5F) else MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = if (isActive) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -904,7 +913,7 @@ fun ProfilesTab(
                         if (isActive) {
                             Box(
                                 modifier = Modifier
-                                    .background(Color(0xFF00E676), shape = RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.tertiary, shape = RoundedCornerShape(4.dp))
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text("⚡ ACTIVE", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.sp)
@@ -978,7 +987,7 @@ fun ProfilesTab(
 
                                 onApplyProfile(type)
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("Apply Profile Now", color = Color.Black, fontWeight = FontWeight.Bold)
@@ -1008,7 +1017,12 @@ fun EngineSoundsTab() {
             SoundOption("Alien Space Engine", "Extraterrestrial Alien Spacecraft Sound", R.raw.snd_558975_fivebrosstopmosyt_alien_engine_loop_1),
             SoundOption("Extractor Fan Turbine", "Jet Turbine Fan Sound Effect", R.raw.snd_618185_theplax_extractor_fan),
             SoundOption("T4 Turbo Diesel Engine", "Heavy Duty Turbo Diesel Idle", R.raw.snd_679693_grauxonen_t4_19td_2000_engine_loop),
-            SoundOption("Spacepod Thrusters", "Space Pod Orbital Thrusters", R.raw.snd_773036_sealionstudios_spacepodthursters)
+            SoundOption("Spacepod Thrusters", "Space Pod Orbital Thrusters", R.raw.snd_773036_sealionstudios_spacepodthursters),
+            SoundOption("Formula 1 Racing Engine", "High-RPM Formula 1 V10 Sound Profile", R.raw.snd_f1),
+            SoundOption("Formula 1 Engine (Low RPM)", "Low-RPM Formula 1 Engine Idle & Growl", R.raw.snd_f1_low),
+            SoundOption("Dualtron X Motor", "Dualtron X Super Scooter Electric Motor Simulation", R.raw.snd_dualtron_x),
+            SoundOption("Dualtron Thunder", "Dualtron Thunder Dual-Motor Performance Profile", R.raw.snd_dualtron_thunder),
+            SoundOption("HyperX Electric Motor", "HyperX High-Performance Electric Powertrain", R.raw.snd_hyper_x)
         )
     }
 
@@ -1032,7 +1046,7 @@ fun EngineSoundsTab() {
         // Master Control Card
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF121824)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -1042,7 +1056,7 @@ fun EngineSoundsTab() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Engine Sound Simulator", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+                            Text("Engine Sound Simulator", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 "Simulates engine/motor audio pitched to your live VESC ERPM using low-latency SoundPool.",
@@ -1058,7 +1072,7 @@ fun EngineSoundsTab() {
                                 prefs.edit { putBoolean("engine_sound_enabled", checked) }
                                 Toast.makeText(context, if (checked) "Engine sound enabled for ride service" else "Engine sound disabled", Toast.LENGTH_SHORT).show()
                             },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+                            colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
                         )
                     }
                 }
@@ -1069,7 +1083,7 @@ fun EngineSoundsTab() {
         if (previewingResId != 0) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A5F)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -1078,7 +1092,7 @@ fun EngineSoundsTab() {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("🔊 Live Audio Preview Test", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF00E5FF))
+                            Text("🔊 Live Audio Preview Test", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MaterialTheme.colorScheme.primary)
                             OutlinedButton(
                                 onClick = {
                                     previewManager?.stopEngineSound()
@@ -1086,7 +1100,7 @@ fun EngineSoundsTab() {
                                     previewingResId = 0
                                 }
                             ) {
-                                Text("Stop Preview", fontSize = 12.sp, color = Color(0xFFFF5252))
+                                Text("Stop Preview", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                             }
                         }
 
@@ -1096,7 +1110,7 @@ fun EngineSoundsTab() {
                             "Simulated ERPM: ${testErpm.toInt()} RPM",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
 
                         Slider(
@@ -1107,8 +1121,8 @@ fun EngineSoundsTab() {
                             },
                             valueRange = 0f..20000f,
                             colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF00E5FF),
-                                activeTrackColor = Color(0xFF00E5FF)
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary
                             )
                         )
                     }
@@ -1123,7 +1137,7 @@ fun EngineSoundsTab() {
 
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isSelected) Color(0xFF1B324A) else MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -1141,7 +1155,7 @@ fun EngineSoundsTab() {
                         if (isSelected) {
                             Box(
                                 modifier = Modifier
-                                    .background(Color(0xFF00E676), shape = RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.tertiary, shape = RoundedCornerShape(4.dp))
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text("⚡ ACTIVE", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.sp)
@@ -1162,7 +1176,7 @@ fun EngineSoundsTab() {
                                 Toast.makeText(context, "Selected ${sound.name}", Toast.LENGTH_SHORT).show()
                             },
                             enabled = !isSelected,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(if (isSelected) "Active Profile" else "Select Profile", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -1240,9 +1254,9 @@ fun RideLogsTab(onViewLog: (LogFileItem) -> Unit) {
                                         refreshLogs()
                                         Toast.makeText(context, "Deleted $deletedCount log file(s)", Toast.LENGTH_SHORT).show()
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                                 ) {
-                                    Text("Delete All", fontSize = 12.sp, color = Color.White)
+                                    Text("Delete All", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                                 }
                             }
                         }
@@ -1319,7 +1333,7 @@ fun LogFileCard(
                 Box(
                     modifier = Modifier
                         .background(
-                            if (item.isGpx) Color(0xFF00E5FF) else Color(0xFFFFD54F),
+                            if (item.isGpx) MaterialTheme.colorScheme.primary else Color(0xFFFFD54F),
                             shape = RoundedCornerShape(4.dp)
                         )
                         .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1353,13 +1367,13 @@ fun LogFileCard(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE040FB)),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("View Plot", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("View Plot", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
 
                 Button(
                     onClick = onShare,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Share", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -1369,7 +1383,7 @@ fun LogFileCard(
                     onClick = onDelete,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Delete", color = Color(0xFFFF5252), fontSize = 12.sp)
+                    Text("Delete", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
             }
         }
@@ -1471,6 +1485,7 @@ fun SettingsAndScanTab(
                             value = polePairsText,
                             onValueChange = onPolePairsChange,
                             label = { Text("Motor Pole Pairs") },
+                            supportingText = { Text("e.g. 7 for a 14-pole motor") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                             singleLine = true
@@ -1480,6 +1495,7 @@ fun SettingsAndScanTab(
                             value = wheelDiameterText,
                             onValueChange = onWheelDiameterChange,
                             label = { Text("Wheel Dia (inches)") },
+                            supportingText = { Text("e.g. 10.0 or 11.0 in") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f),
                             singleLine = true
@@ -1519,7 +1535,7 @@ fun SettingsAndScanTab(
                                 storageOption = "PUBLIC_DOCUMENTS"
                                 prefs.edit { putString("log_storage_option", "PUBLIC_DOCUMENTS") }
                             },
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
@@ -1544,7 +1560,7 @@ fun SettingsAndScanTab(
                                 storageOption = "PRIVATE_FILES"
                                 prefs.edit { putString("log_storage_option", "PRIVATE_FILES") }
                             },
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
@@ -1569,7 +1585,7 @@ fun SettingsAndScanTab(
                                 storageOption = "CUSTOM_SAF"
                                 prefs.edit { putString("log_storage_option", "CUSTOM_SAF") }
                             },
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00E5FF))
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -1586,7 +1602,7 @@ fun SettingsAndScanTab(
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = { safFolderLauncher.launch(null) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("📁 Pick Folder (Storage Access Framework)", color = Color.Black, fontWeight = FontWeight.Bold)
@@ -1627,7 +1643,7 @@ fun SettingsAndScanTab(
                                 logGpxEnabled = checked
                                 prefs.edit { putBoolean("log_gpx_enabled", checked) }
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Log Ride to Strava (GPX)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -1650,7 +1666,7 @@ fun SettingsAndScanTab(
                                 logCsvEnabled = checked
                                 prefs.edit { putBoolean("log_csv_enabled", checked) }
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Log Raw Telemetry (CSV)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -1670,7 +1686,7 @@ fun SettingsAndScanTab(
                             onCheckedChange = { checked ->
                                 onHealthConnectToggle(checked)
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF00E5FF))
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Sync Rides to Health Connect", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -1726,7 +1742,7 @@ fun SettingsAndScanTab(
                                 enableDualVesc = checked
                                 prefs.edit { putBoolean("enable_dual_vesc", checked) }
                             },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+                            colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
                         )
                     }
 
@@ -1752,7 +1768,7 @@ fun SettingsAndScanTab(
                         Text(
                             "Tip: Set CAN ID to 255 to broadcast profile commands to ALL connected controllers on the CAN bus, or enter the specific CAN ID (e.g. 53, 1, 2).",
                             fontSize = 11.sp,
-                            color = Color(0xFF00E5FF)
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -1803,7 +1819,7 @@ fun SettingsAndScanTab(
                                     prefs.edit { putBoolean(item.prefKey, checked) }
                                     BaseTelemetryWidget.sendTelemetryBroadcast(context, telemetryData)
                                 },
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+                                colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
                             )
                         }
                     }
@@ -1828,7 +1844,7 @@ fun SettingsAndScanTab(
                             if (isScanning) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.height(16.dp).width(16.dp),
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -1855,7 +1871,7 @@ fun SettingsAndScanTab(
             val isSelected = device.address.equals(macAddress, ignoreCase = true)
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isSelected) Color(0xFF1E3A5F) else MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
                 ),
                 modifier = Modifier
                     .fillMaxWidth()

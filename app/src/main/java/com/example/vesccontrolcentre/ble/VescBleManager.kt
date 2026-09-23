@@ -36,7 +36,7 @@ import java.util.UUID
 @SuppressLint("MissingPermission")
 class VescBleManager(
     private val context: Context,
-    private var polePairs: Int = 7,
+    private var polePairs: Int = 12,
     private var wheelDiameterInches: Float = 10.0f
 ) : BluetoothGattCallback() {
 
@@ -79,8 +79,9 @@ class VescBleManager(
     private var isPollingPaused = false
 
     fun updateConfig(polePairs: Int, wheelDiameterInches: Float) {
-        this.polePairs = polePairs
-        this.wheelDiameterInches = wheelDiameterInches
+        this.polePairs = if (polePairs <= 0) 7 else polePairs
+        this.wheelDiameterInches = if (wheelDiameterInches <= 0f) 10.0f else wheelDiameterInches
+        Log.d(TAG, "Config updated: polePairs=${this.polePairs}, wheelDiameterInches=${this.wheelDiameterInches}")
     }
 
     fun connect(deviceAddress: String, autoConnect: Boolean = true) {
@@ -430,6 +431,12 @@ class VescBleManager(
                         wheelDiameterInches = this.wheelDiameterInches
                     )
 
+                    // Discard unrealistic initial speed spikes on first connection handshake
+                    if (calculatedMph > 60f && lastSuccessfulPollMs == 0L) {
+                        Log.w(TAG, "Discarding initial telemetry speed glitch: $calculatedMph MPH")
+                        return
+                    }
+
                     val currentTimeMs = System.currentTimeMillis()
                     if (lastSuccessfulPollMs > 0) {
                         val delta = currentTimeMs - lastSuccessfulPollMs
@@ -438,6 +445,19 @@ class VescBleManager(
                         }
                     }
                     lastSuccessfulPollMs = currentTimeMs
+
+                    var estimatedRemainingMiles = 0f
+                    if (wattHoursUsed > 0.1f && activeRideDurationMs > 10000L) {
+                        val activeHours = activeRideDurationMs / 3600000f
+                        val estimatedDistanceMiles = calculatedMph * activeHours
+                        if (estimatedDistanceMiles > 0.05f) {
+                            val whPerMile = wattHoursUsed / estimatedDistanceMiles
+                            if (whPerMile > 0f) {
+                                val remainingWh = (720f - wattHoursUsed).coerceAtLeast(0f)
+                                estimatedRemainingMiles = remainingWh / whPerMile
+                            }
+                        }
+                    }
 
                     _telemetryData.value = TelemetryData(
                         mph = calculatedMph,
@@ -456,6 +476,7 @@ class VescBleManager(
                         adcThrottle = latestAdcThrottle,
                         adcBrake = latestAdcBrake,
                         activeRideDurationMs = activeRideDurationMs,
+                        estimatedRemainingMiles = estimatedRemainingMiles,
                         isConnected = true,
                         statusText = "Connected"
                     )
@@ -503,8 +524,9 @@ class VescBleManager(
 }
 
 fun calculateMph(erpm: Float, polePairs: Int = 7, wheelDiameterInches: Float = 10.0f): Float {
-    val mechanicalRpm = erpm / polePairs
-    val circumferenceInches = Math.PI * wheelDiameterInches
-    val inchesPerMinute = mechanicalRpm * circumferenceInches
-    return (inchesPerMinute * 60 / 63360).toFloat()
+    val safePolePairs = if (polePairs <= 0) 7 else polePairs
+    val safeWheelDiameter = if (wheelDiameterInches <= 0f) 10.0f else wheelDiameterInches
+    val mechanicalRpm = erpm / safePolePairs
+    val wheelCircumferenceMeters = Math.PI * safeWheelDiameter * 0.0254
+    return ((mechanicalRpm * wheelCircumferenceMeters * 60.0) / 1609.344).toFloat()
 }
