@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">vesccontrolcentre</string>
+    <string name="app_name">VESC Control Centre</string>
     <string name="hello_world">Hello, %1$s!</string>
 </resources>

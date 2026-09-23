@@ -8,14 +8,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import android.content.Intent
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.remember
 import androidx.core.content.ContextCompat
 import com.example.vesccontrolcentre.service.VescService
+import com.example.vesccontrolcentre.settings.ThemeMode
+import com.example.vesccontrolcentre.settings.UserSettingsManager
 import com.example.vesccontrolcentre.ui.MainScreen
 import com.example.vesccontrolcentre.ui.theme.VescControlCentreTheme
+import com.google.firebase.Firebase
+import com.google.firebase.appcheck.appCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.initialize
 
 class MainActivity : ComponentActivity() {
 
@@ -29,6 +38,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Firebase.initialize(context = this)
+        val firebaseAppCheck = Firebase.appCheck
+        firebaseAppCheck.installAppCheckProviderFactory(
+            DebugAppCheckProviderFactory.getInstance()
+        )
+        
         enableEdgeToEdge()
 
         checkPermissions()
@@ -36,7 +51,16 @@ class MainActivity : ComponentActivity() {
         bootVescServiceIfPermissionsGranted()
 
         setContent {
-            VescControlCentreTheme {
+            val settingsManager = remember { UserSettingsManager(this) }
+            val appTheme by settingsManager.appTheme.collectAsState()
+            
+            val darkTheme = when (appTheme) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            VescControlCentreTheme(darkTheme = darkTheme) {
                 MainScreen(
                     onRequestPermissions = { requestPermissions() },
                     hasPermissions = hasPermissions

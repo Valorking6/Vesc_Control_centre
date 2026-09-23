@@ -7,13 +7,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.glance.Button
-import androidx.glance.ButtonDefaults
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartService
+import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -23,6 +23,7 @@ import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
+import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.example.vesccontrolcentre.service.VescService
@@ -46,30 +47,31 @@ class SyncMarkerWidget : GlanceAppWidget() {
             modifier = GlanceModifier
                 .fillMaxSize()
                 .background(Color(0xFF121824))
-                .padding(8.dp),
-            contentAlignment = Alignment.Center
+                .cornerRadius(16.dp)
+                .padding(4.dp)
+                .clickable(actionStartService(dropIntent)),
+            contentAlignment = Alignment.Center,
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "📍 VESC SYNC",
+                    text = "📍",
                     style = TextStyle(
-                        color = ColorProvider(Color(0xFF00E5FF)),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                        fontSize = 22.sp,
+                    ),
                 )
 
-                Button(
-                    text = "Drop Sync Marker",
-                    onClick = actionStartService(dropIntent),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = ColorProvider(Color(0xFF00E676)),
-                        contentColor = ColorProvider(Color.Black)
+                Text(
+                    text = "VESC SYNC",
+                    style = TextStyle(
+                        color = ColorProvider(Color(0xFF00E5FF)),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
                     ),
-                    modifier = GlanceModifier.padding(top = 6.dp)
+                    modifier = GlanceModifier.padding(top = 2.dp),
                 )
             }
         }

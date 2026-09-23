@@ -26,6 +26,7 @@ android {
             properties.load(localPropertiesFile.inputStream())
         }
         buildConfigField("String", "GEMINI_API_KEY", "\"${properties.getProperty("GEMINI_API_KEY", "")}\"")
+        buildConfigField("String", "ELEVENLABS_API_KEY", "\"${properties.getProperty("ELEVENLABS_API_KEY", "")}\"")
     }
 
     buildTypes {
@@ -53,7 +54,6 @@ dependencies {
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.appcheck.playintegrity)
     implementation("com.google.firebase:firebase-appcheck-debug")
-    implementation(libs.firebase.ai)
     implementation(libs.firebase.crashlytics)
 
     // Compose & UI
@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
+    implementation("androidx.security:security-crypto-ktx:1.1.0-alpha06")
     
     // Glance & Wear OS
     implementation("androidx.glance:glance-appwidget:1.2.0")
@@ -79,7 +80,7 @@ dependencies {
     
     // AI & ML
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
-    // implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
     
     // Coroutines & Networking
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
